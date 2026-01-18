@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Output
+output/
+*.mp4
+*.mp3
+*.wav
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
