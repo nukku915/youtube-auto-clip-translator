@@ -197,52 +197,110 @@ ffmpeg -f lavfi -i color=c=black:s=1920x1080:d=2 \
 
 ---
 
-## 5. アスペクト比変換
+## 5. アスペクト比変換（Shorts用）
 
-### 5.1 変換モード
+### 5.1 変換方式: パディング + グラスモーフィズム背景
 
-| モード | 説明 | 用途 |
-|--------|------|------|
-| crop_center | 中央を切り取り | シンプル |
-| crop_smart | 顔/動き検出で追従 | 人物中心の動画 |
-| pad | 左右にパディング追加 | 全体を表示したい場合 |
-| zoom | ズームしながらクロップ | 動的な演出 |
+**決定事項**: 元動画のアスペクト比を維持し、余白にデザイン背景を配置
 
-### 5.2 16:9 → 9:16 変換
-
-```python
-def calculate_crop_for_shorts(
-    width: int,
-    height: int,
-    mode: str = "crop_center"
-) -> dict:
-    """
-    16:9 → 9:16 変換のクロップ領域を計算
-    """
-    # 9:16 のアスペクト比
-    target_ratio = 9 / 16
-
-    # 元動画から切り取る領域を計算
-    crop_width = int(height * target_ratio)
-    crop_height = height
-    crop_x = (width - crop_width) // 2  # 中央
-    crop_y = 0
-
-    return {
-        "w": crop_width,
-        "h": crop_height,
-        "x": crop_x,
-        "y": crop_y
-    }
+```
+┌─────────────────────┐
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │ ← グラスモーフィズム背景
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │   （元動画をぼかし + 暗く）
+├─────────────────────┤
+│ ┌─────────────────┐ │
+│ │                 │ │
+│ │   元動画 16:9   │ │ ← アスペクト比維持
+│ │   最大サイズ    │ │
+│ │                 │ │
+│ └─────────────────┘ │
+├─────────────────────┤
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │
+│                     │
+│   こんにちは        │ ← 字幕（下部余白に配置）
+│                     │
+└─────────────────────┘
 ```
 
-### 5.3 FFmpeg コマンド例（クロップ）
+### 5.2 背景スタイル設定
+
+```python
+@dataclass
+class ShortsBackgroundConfig:
+    # 背景スタイル
+    style: str = "glassmorphism"  # glassmorphism, solid, gradient
+
+    # グラスモーフィズム設定
+    blur_radius: int = 30         # ぼかし半径
+    brightness: float = -0.3      # 明度調整（暗くする）
+    saturation: float = 0.8       # 彩度
+
+    # ソリッドカラー（style="solid"の場合）
+    solid_color: str = "#000000"
+
+    # グラデーション（style="gradient"の場合）
+    gradient_start: str = "#1a1a2e"
+    gradient_end: str = "#16213e"
+```
+
+### 5.3 FFmpeg コマンド（グラスモーフィズム）
 
 ```bash
-# 16:9 (1920x1080) → 9:16 (1080x1920)
-ffmpeg -i input.mp4 \
-  -vf "crop=607:1080:656:0,scale=1080:1920" \
-  -c:v libx264 -c:a copy output_shorts.mp4
+ffmpeg -i input.mp4 -filter_complex "
+  # 背景: 拡大してクロップ + ぼかし + 暗く
+  [0:v]scale=1080:1920:force_original_aspect_ratio=increase,
+       crop=1080:1920,
+       boxblur=30:30,
+       eq=brightness=-0.3:saturation=0.8[bg];
+
+  # 前景: アスペクト比維持でスケール
+  [0:v]scale=1080:-1:force_original_aspect_ratio=decrease[fg];
+
+  # 合成: 中央配置
+  [bg][fg]overlay=(W-w)/2:(H-h)/2[out]
+" -map "[out]" -map 0:a -c:v libx264 -c:a aac output_shorts.mp4
+```
+
+### 5.4 変換関数
+
+```python
+def convert_to_shorts(
+    input_path: Path,
+    output_path: Path,
+    config: ShortsBackgroundConfig = None
+) -> Path:
+    """
+    16:9 動画を 9:16 Shorts形式に変換
+
+    - 元動画のアスペクト比を維持
+    - グラスモーフィズム背景を適用
+    - 字幕は下部余白に配置
+    """
+    if config is None:
+        config = ShortsBackgroundConfig()
+
+    if config.style == "glassmorphism":
+        filter_complex = build_glassmorphism_filter(config)
+    elif config.style == "solid":
+        filter_complex = build_solid_filter(config)
+    else:
+        filter_complex = build_gradient_filter(config)
+
+    # FFmpeg実行
+    ...
+```
+
+### 5.5 字幕位置の自動調整
+
+Shorts変換時は字幕位置を下部余白に移動:
+
+```python
+SHORTS_SUBTITLE_CONFIG = {
+    "position": "bottom",
+    "margin_v": 150,        # 下部マージン（UIを避ける）
+    "font_size": 36,        # やや大きめ
+    "max_chars_per_line": 20,  # 短く
+}
 ```
 
 ---

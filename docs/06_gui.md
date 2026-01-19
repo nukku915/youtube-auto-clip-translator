@@ -327,15 +327,20 @@ src/gui/components/
 └── toast.py              # 通知トースト
 ```
 
-### 4.2 VideoPlayer コンポーネント
+### 4.2 VideoPlayer コンポーネント（mpv埋め込み）
+
+**決定事項**: mpvを使用したリアルタイム音声再生・字幕表示
 
 ```python
+import mpv
+
 class VideoPlayer(CTkFrame):
     """
-    動画プレーヤーコンポーネント
+    動画プレーヤーコンポーネント（mpv埋め込み）
 
     機能:
-    - 動画の再生/一時停止
+    - 動画の再生/一時停止（音声付き）
+    - リアルタイム字幕表示（ASSファイル対応）
     - シーク
     - 音量調整
     - 現在時間表示
@@ -344,26 +349,74 @@ class VideoPlayer(CTkFrame):
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
 
-    def load(self, video_path: Path) -> None:
+        # mpvプレーヤーをウィンドウに埋め込み
+        self.player = mpv.MPV(
+            wid=str(int(self.winfo_id())),  # CustomTkinterウィンドウに埋め込み
+            vo="gpu",                        # GPUレンダリング
+            hwdec="auto",                    # ハードウェアデコード
+            keep_open=True,                  # 終了時も開いたまま
+        )
+
+    def load(self, video_path: Path, subtitle_path: Path = None) -> None:
         """動画をロード"""
+        self.player.play(str(video_path))
+        if subtitle_path:
+            self.player.sub_file = str(subtitle_path)
+
+    def update_subtitle(self, subtitle_path: Path) -> None:
+        """
+        字幕ファイルを更新（編集時のリアルタイム反映）
+
+        字幕編集 → 一時ASSファイル生成 → この関数で反映
+        """
+        self.player.sub_file = str(subtitle_path)
+        self.player.command("sub-reload")
 
     def play(self) -> None:
         """再生"""
+        self.player.pause = False
 
     def pause(self) -> None:
         """一時停止"""
+        self.player.pause = True
 
     def seek(self, time: float) -> None:
         """指定時間にシーク"""
+        self.player.seek(time, "absolute")
 
     def get_current_time(self) -> float:
         """現在の再生時間を取得"""
+        return self.player.time_pos or 0.0
 
     def set_volume(self, volume: float) -> None:
         """音量設定（0.0-1.0）"""
+        self.player.volume = volume * 100
 
     def on_time_update(self, callback: Callable[[float], None]) -> None:
         """時間更新コールバック登録"""
+        @self.player.property_observer("time-pos")
+        def on_time_pos(_name, value):
+            if value is not None:
+                callback(value)
+
+    def destroy(self) -> None:
+        """クリーンアップ"""
+        self.player.terminate()
+        super().destroy()
+```
+
+### 字幕リアルタイム更新フロー
+
+```
+字幕編集（GUIで変更）
+    ↓
+一時ASSファイルを生成（即座に）
+    ↓
+VideoPlayer.update_subtitle(temp_ass_path)
+    ↓
+mpvが字幕を再読み込み
+    ↓
+プレビューに即座に反映
 ```
 
 ### 4.3 Timeline コンポーネント
@@ -553,8 +606,104 @@ FONTS = {
 ```
 customtkinter>=5.2.0
 pillow>=10.0.0
-opencv-python>=4.8.0  # 動画プレビュー用
+python-mpv>=1.0.0     # 動画プレビュー（mpv埋め込み）
 numpy>=1.24.0
+librosa>=0.10.0       # 波形表示
+```
+
+### 外部ツール（自動インストール対象）
+```
+mpv                   # 動画プレーヤー
+```
+
+---
+
+## 7.5 自動保存と確認ダイアログ
+
+### プロジェクト自動保存
+
+**決定事項**: 30秒ごとに自動保存 + 手動保存
+
+```python
+AUTO_SAVE_CONFIG = {
+    "interval_seconds": 30,
+    "save_path": "~/.youtube-auto-clip-translator/autosave/",
+    "max_autosaves": 5,  # 古いものは削除
+}
+
+class AutoSaveManager:
+    def __init__(self, state_manager: StateManager):
+        self.timer = None
+        self.start_auto_save()
+
+    def start_auto_save(self):
+        """自動保存タイマー開始"""
+        self.timer = threading.Timer(
+            AUTO_SAVE_CONFIG["interval_seconds"],
+            self._save_and_reschedule
+        )
+        self.timer.start()
+
+    def _save_and_reschedule(self):
+        self._save_draft()
+        self.start_auto_save()  # 次のタイマーをセット
+
+    def _save_draft(self):
+        """ドラフト保存"""
+        ...
+```
+
+### 処理中の確認ダイアログ
+
+**決定事項**: 処理中はアプリを閉じれないように確認ダイアログを表示
+
+```python
+class App(CTk):
+    def __init__(self):
+        super().__init__()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self):
+        """閉じるボタン押下時"""
+        if self.state_manager.get_state().is_processing:
+            # 処理中の場合
+            result = self._show_close_dialog()
+            if result == "cancel":
+                return  # 閉じない
+            elif result == "force_close":
+                self._cancel_processing()
+                self.destroy()
+        else:
+            # 処理中でない場合
+            if self.state_manager.get_state().is_modified:
+                result = self._show_save_dialog()
+                if result == "save":
+                    self._save_project()
+                elif result == "cancel":
+                    return
+            self.destroy()
+
+    def _show_close_dialog(self) -> str:
+        """処理中の確認ダイアログ"""
+        dialog = CTkMessagebox(
+            title="処理中です",
+            message="処理中です。終了すると進行中の処理は破棄されます。\n終了しますか？",
+            options=["キャンセル", "終了"]
+        )
+        return dialog.get()
+```
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ 処理中です                                              │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ 処理中です。終了すると進行中の処理は破棄されます。       │
+│ 終了しますか？                                          │
+│                                                         │
+│                    [キャンセル]  [終了]                  │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
