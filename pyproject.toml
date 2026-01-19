@@ -1,0 +1,53 @@
+[project]
+name = "youtube-auto-clip-translator"
+version = "0.1.0"
+description = "YouTube動画から切り抜き動画を自動生成し、翻訳字幕を付与するデスクトップアプリ"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # 動画取得
+    "yt-dlp>=2024.12.0",
+
+    # 音声処理・文字起こし
+    "whisperx>=3.1.0",
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+
+    # AI (Gemini)
+    "google-generativeai>=0.8.0",
+
+    # 字幕処理
+    "pysubs2>=1.8.0",
+
+    # GUI
+    "customtkinter>=5.2.0",
+
+    # 設定・データモデル
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+
+    # 非同期処理
+    "aiohttp>=3.9.0",
+    "aiofiles>=24.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+
+[project.scripts]
+yact = "src.main:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

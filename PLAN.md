@@ -233,9 +233,64 @@ Phase 5: 書き出し（ローカル処理）
 
 ---
 
-## 9. 更新履歴
+## 9. MVP実装タスク
+
+### 実装順序
+
+```
+1. 環境構築
+   └─ pyproject.toml作成、依存関係インストール
+
+2. データモデル（models/）
+   └─ project.py, transcription.py, translation.py
+
+3. 設定（config/）
+   └─ settings.py
+
+4. コアモジュール（core/）※順番に実装・動作確認
+   ├─ video_fetcher.py    → docs/01参照
+   ├─ audio_processor.py  → docs/02参照
+   ├─ transcriber.py      → docs/02参照
+   ├─ translator.py       → docs/03参照（Geminiのみ）
+   └─ subtitle_writer.py  → docs/04参照
+
+5. CLI動作確認
+   └─ main.py でURL→SRT出力を確認
+
+6. GUI（gui/）
+   ├─ app.py（メインウィンドウ）
+   ├─ views/main_view.py（URL入力、進捗）
+   └─ views/settings_view.py（API設定）
+
+7. 仕上げ
+   ├─ エラーハンドリング
+   └─ 外部ツール確認ダイアログ
+```
+
+### タスク一覧
+
+| # | タスク | 参照ドキュメント | 状態 |
+|---|--------|-----------------|------|
+| 1 | pyproject.toml作成 | - | [ ] |
+| 2 | src/ディレクトリ構造作成 | - | [ ] |
+| 3 | models/ 実装 | 各docs参照 | [ ] |
+| 4 | config/settings.py 実装 | docs/00 | [ ] |
+| 5 | core/video_fetcher.py | docs/01 | [ ] |
+| 6 | core/audio_processor.py | docs/02 | [ ] |
+| 7 | core/transcriber.py | docs/02 | [ ] |
+| 8 | core/translator.py | docs/03 | [ ] |
+| 9 | core/subtitle_writer.py | docs/04 | [ ] |
+| 10 | main.py (CLI) | - | [ ] |
+| 11 | gui/app.py | docs/06 | [ ] |
+| 12 | gui/views/ | docs/06 | [ ] |
+| 13 | エラーハンドリング強化 | docs/00 | [ ] |
+
+---
+
+## 10. 更新履歴
 
 | 日付 | バージョン | 内容 |
 |------|-----------|------|
 | 2026-01-19 | 1.0 | 初版作成 |
+| 2026-01-19 | 1.2 | MVP実装タスクリストを追加 |
 | 2026-01-19 | 1.1 | ハイブリッドLLM構成（Ollama + Gemini）を追加 |
