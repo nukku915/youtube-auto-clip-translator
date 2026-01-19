@@ -3,13 +3,20 @@
 ## 1. 概要
 
 ### 目的
-Gemini 3 Flash APIを使用して、文字起こしテキストの分析・翻訳を行う
+ハイブリッドLLM構成（ローカル + クラウド）を使用して、文字起こしテキストの分析・翻訳を行う
+
+### LLMプロバイダ
+| プロバイダ | 用途 | モデル |
+|-----------|------|--------|
+| Ollama（ローカル） | 見どころ検出、チャプター検出 | gemma-2-jpn:2b |
+| Gemini（クラウド） | 翻訳、タイトル生成 | gemini-3-flash |
 
 ### 責務
 - テキストの翻訳（日本語⇔英語、自動検出）
 - 見どころ検出・スコアリング
 - チャプター区切り検出
 - セクションタイトル生成
+- LLMプロバイダの自動切り替え
 - APIコスト最適化
 
 ---
@@ -28,7 +35,64 @@ AI Analyzer
 
 ## 3. 共通仕様
 
-### API設定
+### ハイブリッドLLM設定
+
+```python
+@dataclass
+class LLMConfig:
+    """ハイブリッドLLM設定"""
+    # プロバイダ設定
+    provider: str = "hybrid"  # "local", "gemini", "hybrid"
+
+    # ローカルLLM（Ollama）設定
+    local_enabled: bool = True
+    local_model: str = "gemma-2-jpn:2b"
+    ollama_host: str = "http://localhost:11434"
+    ollama_timeout: int = 120  # ローカルは時間がかかる可能性
+
+    # クラウドLLM（Gemini）設定
+    gemini_enabled: bool = True
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3-flash"
+    gemini_timeout: int = 60
+
+    # 共通設定
+    temperature: float = 0.3
+    max_output_tokens: int = 8192
+
+    # タスク振り分け
+    use_local_for: List[str] = field(default_factory=lambda: [
+        "highlight_detection",
+        "chapter_detection",
+    ])
+    use_gemini_for: List[str] = field(default_factory=lambda: [
+        "translation",
+        "title_generation",
+    ])
+
+    # フォールバック
+    fallback_to_gemini: bool = True
+
+    # レート制限対策（Gemini用）
+    requests_per_minute: int = 60
+    retry_count: int = 3
+    retry_delay: float = 1.0
+```
+
+### Ollama設定
+
+```python
+@dataclass
+class OllamaConfig:
+    host: str = "http://localhost:11434"
+    model: str = "gemma-2-jpn:2b"
+    timeout: int = 120
+    temperature: float = 0.3
+    num_ctx: int = 8192  # コンテキストウィンドウサイズ
+```
+
+### Gemini設定
+
 ```python
 @dataclass
 class GeminiConfig:
@@ -44,35 +108,84 @@ class GeminiConfig:
     retry_delay: float = 1.0
 ```
 
-### APIキー管理
-
-**保存方法**: 設定ファイル（平文）、GUIから設定
+### 設定ファイル
 
 ```yaml
 # ~/.youtube-auto-clip-translator/config.yaml
-api:
+llm:
+  provider: "hybrid"  # hybrid, local, gemini
+  fallback_to_gemini: true
+
+  ollama:
+    host: "http://localhost:11434"
+    model: "gemma-2-jpn:2b"
+    timeout: 120
+
   gemini:
     api_key: "YOUR_API_KEY_HERE"
     model: "gemini-3-flash"
+    timeout: 60
+
+  task_routing:
+    highlight_detection: "local"
+    chapter_detection: "local"
+    translation: "gemini"
+    title_generation: "gemini"
 ```
 
-**読み込み優先順位**:
+**読み込み優先順位（Gemini API Key）**:
 1. 環境変数 `GEMINI_API_KEY`（設定されている場合）
 2. 設定ファイル `~/.youtube-auto-clip-translator/config.yaml`
 
-**GUI設定画面**:
-```
-┌─────────────────────────────────────────────────────────┐
-│ Gemini API Key                                          │
-│ ┌─────────────────────────────────────────────────────┐ │
-│ │ ••••••••••••••••••••••••••••••                      │ │
-│ └─────────────────────────────────────────────────────┘ │
-│ [表示/非表示]  [接続テスト]                              │
-│ ステータス: ✓ 接続成功                                  │
-└─────────────────────────────────────────────────────────┘
+### LLMルーター
+
+```python
+class LLMRouter:
+    """タスクに応じてLLMプロバイダを選択"""
+
+    def __init__(self, config: LLMConfig):
+        self.config = config
+        self.ollama_client = OllamaClient(config) if config.local_enabled else None
+        self.gemini_client = GeminiClient(config) if config.gemini_enabled else None
+
+    async def execute(
+        self,
+        task: str,
+        prompt: str,
+        **kwargs
+    ) -> LLMResponse:
+        """
+        タスクに応じて適切なLLMで実行
+
+        Args:
+            task: タスク種別 (highlight_detection, translation, etc.)
+            prompt: プロンプト
+
+        Returns:
+            LLMResponse: 応答
+        """
+        provider = self._get_provider_for_task(task)
+
+        try:
+            if provider == "local":
+                return await self.ollama_client.generate(prompt, **kwargs)
+            else:
+                return await self.gemini_client.generate(prompt, **kwargs)
+        except Exception as e:
+            if self.config.fallback_to_gemini and provider == "local":
+                # ローカル失敗時はGeminiにフォールバック
+                return await self.gemini_client.generate(prompt, **kwargs)
+            raise
+
+    def _get_provider_for_task(self, task: str) -> str:
+        if task in self.config.use_local_for and self.config.local_enabled:
+            return "local"
+        return "gemini"
 ```
 
-**接続テスト**: 保存時にAPIキーの有効性を確認
+### 接続テスト
+
+保存時にAPIキーの有効性とOllamaの接続を確認
 
 ### 共通入力データ
 ```python
@@ -409,16 +522,128 @@ class AnalysisCache:
 
 ---
 
-## 9. エラーハンドリング
+## 9. Ollamaクライアント
+
+### OllamaClient クラス
+
+```python
+class OllamaClient:
+    """Ollamaローカルモデル用クライアント"""
+
+    def __init__(self, config: OllamaConfig):
+        self.config = config
+        self.base_url = config.host
+
+    async def generate(
+        self,
+        prompt: str,
+        system_prompt: str = None,
+        **kwargs
+    ) -> LLMResponse:
+        """
+        テキスト生成
+
+        Args:
+            prompt: ユーザープロンプト
+            system_prompt: システムプロンプト
+
+        Returns:
+            LLMResponse: 応答
+        """
+        payload = {
+            "model": self.config.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": self.config.temperature,
+                "num_ctx": self.config.num_ctx,
+            }
+        }
+
+        if system_prompt:
+            payload["system"] = system_prompt
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.base_url}/api/generate",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+            ) as response:
+                result = await response.json()
+                return LLMResponse(
+                    text=result["response"],
+                    provider="ollama",
+                    model=self.config.model,
+                )
+
+    async def is_available(self) -> bool:
+        """Ollamaが利用可能か確認"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.base_url}/api/tags",
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as response:
+                    return response.status == 200
+        except Exception:
+            return False
+
+    async def list_models(self) -> List[str]:
+        """インストール済みモデル一覧を取得"""
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{self.base_url}/api/tags") as response:
+                data = await response.json()
+                return [m["name"] for m in data.get("models", [])]
+
+    async def pull_model(
+        self,
+        model: str,
+        progress_callback: Callable[[float, str], None] = None
+    ) -> bool:
+        """モデルをダウンロード"""
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.base_url}/api/pull",
+                json={"name": model, "stream": True}
+            ) as response:
+                async for line in response.content:
+                    data = json.loads(line)
+                    if "completed" in data and "total" in data:
+                        progress = data["completed"] / data["total"] * 100
+                        if progress_callback:
+                            progress_callback(progress, f"Downloading {model}...")
+                    if data.get("status") == "success":
+                        return True
+        return False
+```
+
+### LLMResponse データクラス
+
+```python
+@dataclass
+class LLMResponse:
+    text: str                    # 応答テキスト
+    provider: str                # プロバイダ名 (ollama/gemini)
+    model: str                   # 使用モデル名
+    tokens_used: int = 0         # 使用トークン数（Geminiのみ）
+    latency_ms: float = 0.0      # レイテンシ
+```
+
+---
+
+## 10. エラーハンドリング
 
 ### エラー種別
 | エラー | 原因 | 対処 |
 |--------|------|------|
-| `APIKeyError` | 無効なAPIキー | キーの再設定を促す |
-| `RateLimitError` | レート制限 | 指数バックオフでリトライ |
-| `QuotaExceededError` | 使用量上限 | ユーザーに通知 |
+| `APIKeyError` | 無効なAPIキー（Gemini） | キーの再設定を促す |
+| `RateLimitError` | レート制限（Gemini） | 指数バックオフでリトライ |
+| `QuotaExceededError` | 使用量上限（Gemini） | ユーザーに通知 |
 | `InvalidResponseError` | 不正なレスポンス | リトライ、フォールバック |
 | `TimeoutError` | タイムアウト | リトライ |
+| `OllamaNotRunningError` | Ollamaサービス未起動 | 自動起動試行 or フォールバック |
+| `ModelNotFoundError` | モデル未ダウンロード | モデルDL促す or フォールバック |
+| `OllamaConnectionError` | Ollama接続エラー | Geminiへフォールバック |
 
 ### リトライ戦略
 ```python
@@ -443,14 +668,19 @@ src/core/ai_analyzer/
 ├── highlight_detector.py # 見どころ検出: HighlightDetector
 ├── chapter_detector.py   # チャプター検出: ChapterDetector
 ├── title_generator.py    # タイトル生成: TitleGenerator
-├── gemini_client.py      # API クライアント
+├── llm/
+│   ├── __init__.py
+│   ├── router.py         # LLMルーター（タスク振り分け）
+│   ├── base.py           # LLMクライアント基底クラス
+│   ├── ollama_client.py  # Ollamaクライアント
+│   └── gemini_client.py  # Geminiクライアント
 ├── prompts/
 │   ├── translation.py
 │   ├── highlight.py
 │   ├── chapter.py
 │   └── title.py
 ├── models.py             # データモデル
-├── config.py             # 設定
+├── config.py             # 設定（LLMConfig含む）
 ├── cache.py              # キャッシュ管理
 └── exceptions.py         # カスタム例外
 ```
@@ -462,8 +692,15 @@ src/core/ai_analyzer/
 ### AIAnalyzer クラス
 ```python
 class AIAnalyzer:
-    def __init__(self, config: GeminiConfig):
-        """初期化"""
+    def __init__(self, config: LLMConfig):
+        """
+        初期化
+
+        Args:
+            config: ハイブリッドLLM設定
+        """
+        self.config = config
+        self.router = LLMRouter(config)
 
     async def analyze_full(
         self,
@@ -515,12 +752,24 @@ class AIAnalyzer:
 ## 12. 使用例
 
 ```python
-from core.ai_analyzer import AIAnalyzer, GeminiConfig
+from core.ai_analyzer import AIAnalyzer, LLMConfig
 
-# 設定
-config = GeminiConfig(
-    api_key="YOUR_API_KEY",
-    model="gemini-3-flash"
+# ハイブリッドLLM設定
+config = LLMConfig(
+    provider="hybrid",
+
+    # ローカルLLM設定
+    local_enabled=True,
+    local_model="gemma-2-jpn:2b",
+    ollama_host="http://localhost:11434",
+
+    # クラウドLLM設定
+    gemini_enabled=True,
+    gemini_api_key="YOUR_API_KEY",
+    gemini_model="gemini-3-flash",
+
+    # フォールバック有効
+    fallback_to_gemini=True,
 )
 
 analyzer = AIAnalyzer(config)

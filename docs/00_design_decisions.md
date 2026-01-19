@@ -185,6 +185,7 @@ api:
 | FFmpeg | 動画処理 | バイナリダウンロード |
 | Deno | yt-dlp依存 | 公式インストーラー |
 | mpv | プレビュー再生 | バイナリダウンロード |
+| Ollama | ローカルLLM | 公式インストーラー + モデルDL |
 
 ### プラットフォーム別インストール
 
@@ -194,6 +195,7 @@ INSTALL_URLS = {
     "ffmpeg": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
     "deno": "https://deno.land/install.ps1",
     "mpv": "https://sourceforge.net/projects/mpv-player-windows/files/...",
+    "ollama": "https://ollama.com/download/OllamaSetup.exe",
 }
 ```
 
@@ -204,8 +206,10 @@ INSTALL_COMMANDS = {
     "ffmpeg": "brew install ffmpeg",
     "deno": "brew install deno",
     "mpv": "brew install mpv",
+    "ollama": "brew install ollama",
 }
 # Homebrewがない場合はバイナリをダウンロード
+# Ollama: https://ollama.com/download/Ollama-darwin.zip
 ```
 
 #### Linux
@@ -214,6 +218,7 @@ INSTALL_COMMANDS = {
     "ffmpeg": "apt install ffmpeg / dnf install ffmpeg",
     "deno": "curl -fsSL https://deno.land/install.sh | sh",
     "mpv": "apt install mpv / dnf install mpv",
+    "ollama": "curl -fsSL https://ollama.com/install.sh | sh",
 }
 ```
 
@@ -222,11 +227,11 @@ INSTALL_COMMANDS = {
 ```
 アプリ起動
     ↓
-依存関係チェック
+依存関係チェック（FFmpeg, Deno, mpv, Ollama）
     ↓
 不足あり？
     ├─ Yes → インストールダイアログ表示
-    │         「以下のツールが必要です: FFmpeg, mpv」
+    │         「以下のツールが必要です: FFmpeg, mpv, Ollama」
     │         [自動インストール] [手動でインストール] [キャンセル]
     │              ↓
     │         インストール実行（進捗表示）
@@ -234,6 +239,65 @@ INSTALL_COMMANDS = {
     │         完了 → アプリ起動継続
     │
     └─ No → アプリ起動継続
+```
+
+### Ollama自動セットアップ
+
+```
+Ollamaインストール完了
+    ↓
+Ollamaサービス起動確認
+    ├─ 起動中 → 次へ
+    └─ 未起動 → 自動起動 (ollama serve)
+    ↓
+モデルダウンロード
+    ├─ gemma-2-jpn:2b が存在？
+    │     ├─ Yes → 完了
+    │     └─ No → ダウンロード確認ダイアログ
+    │              「ローカルLLM用モデル（約1.5GB）をダウンロードしますか？」
+    │              [ダウンロード] [後で] [スキップ]
+    │                   ↓
+    │              ollama pull gemma-2-jpn:2b
+    │              （進捗表示）
+    ↓
+セットアップ完了
+```
+
+### モデルダウンロードの実装
+
+```python
+async def setup_ollama():
+    """Ollamaのセットアップ"""
+
+    # 1. Ollamaインストール確認
+    if not is_ollama_installed():
+        await install_ollama()
+
+    # 2. サービス起動
+    if not await is_ollama_running():
+        await start_ollama_service()
+
+    # 3. モデル確認・ダウンロード
+    installed_models = await get_installed_models()
+    required_model = "gemma-2-jpn:2b"
+
+    if required_model not in installed_models:
+        # ダウンロード確認
+        if await confirm_model_download(required_model, size="~1.5GB"):
+            await pull_model(required_model, progress_callback)
+
+
+async def pull_model(model: str, progress_callback):
+    """モデルをダウンロード"""
+    process = await asyncio.create_subprocess_exec(
+        "ollama", "pull", model,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    # 進捗をパースしてコールバック
+    async for line in process.stdout:
+        progress = parse_progress(line)
+        progress_callback(progress, f"Downloading {model}...")
 ```
 
 ### インストール先
@@ -246,6 +310,15 @@ INSTALL_COMMANDS = {
 │   └── mpv(.exe)
 ├── config.yaml
 └── ...
+
+# Ollamaは独自のパスにインストール
+# Windows: %LOCALAPPDATA%\Ollama
+# macOS: /usr/local/bin/ollama
+# Linux: /usr/local/bin/ollama
+
+# Ollamaモデルの保存先
+# Windows: %USERPROFILE%\.ollama\models
+# macOS/Linux: ~/.ollama/models
 ```
 
 ---
@@ -398,7 +471,115 @@ class ShortsBackgroundConfig:
 
 ---
 
-## 10. テスト戦略
+## 10. ハイブリッドLLM構成
+
+### 決定: ローカルLLM（Ollama）+ クラウドLLM（Gemini）のハイブリッド
+
+コスト削減とオフライン対応のため、タスクに応じてローカルLLMとクラウドLLMを使い分ける。
+
+### 構成
+
+| プロバイダ | 用途 | モデル |
+|-----------|------|--------|
+| Ollama（ローカル） | 見どころ検出、チャプター検出 | gemma-2-jpn:2b |
+| Gemini（クラウド） | 翻訳、タイトル生成 | gemini-3-flash |
+
+### タスク別振り分け
+
+```python
+@dataclass
+class LLMConfig:
+    # プロバイダ設定
+    provider: str = "hybrid"  # "local", "gemini", "hybrid"
+
+    # ローカルLLM（Ollama）設定
+    local_enabled: bool = True
+    local_model: str = "gemma-2-jpn:2b"
+    ollama_host: str = "http://localhost:11434"
+
+    # クラウドLLM（Gemini）設定
+    gemini_enabled: bool = True
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3-flash"
+
+    # タスク振り分け
+    use_local_for: List[str] = field(default_factory=lambda: [
+        "highlight_detection",
+        "chapter_detection",
+    ])
+    use_gemini_for: List[str] = field(default_factory=lambda: [
+        "translation",
+        "title_generation",
+    ])
+
+    # フォールバック
+    fallback_to_gemini: bool = True  # ローカル失敗時にGeminiへ
+```
+
+### 振り分け理由
+
+| タスク | 推奨 | 理由 |
+|--------|------|------|
+| 見どころ検出 | ローカル | テキスト分析のみ、精度要求が低め |
+| チャプター検出 | ローカル | 構造認識、ローカルで十分 |
+| 翻訳 | クラウド | 高品質な翻訳が必要 |
+| タイトル生成 | クラウド | 創造性・ニュアンスが重要 |
+
+### フォールバック動作
+
+```
+ローカルLLM処理開始
+    ↓
+成功？
+    ├─ Yes → 結果を返却
+    │
+    └─ No → fallback_to_gemini が true？
+              ├─ Yes → Geminiで再試行
+              │          ↓
+              │        成功 → 結果を返却
+              │        失敗 → エラー
+              │
+              └─ No → エラー
+```
+
+### GUI設定画面
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ LLM設定                                                 │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ [モード選択]                                            │
+│ ○ ハイブリッド（推奨）- ローカル + クラウド併用         │
+│ ○ ローカルのみ - Ollama使用、オフライン動作可          │
+│ ○ クラウドのみ - Gemini API使用                        │
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│ ローカルLLM (Ollama)                                    │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ ステータス: ✓ 起動中                                │ │
+│ │ モデル: gemma-2-jpn:2b                              │ │
+│ │ ホスト: http://localhost:11434                      │ │
+│ └─────────────────────────────────────────────────────┘ │
+│ [Ollama起動] [モデルダウンロード]                        │
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│ クラウドLLM (Gemini)                                    │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ API Key: ••••••••••••••••                           │ │
+│ └─────────────────────────────────────────────────────┘ │
+│ [表示/非表示] [接続テスト]                              │
+│ ステータス: ✓ 接続成功                                  │
+│                                                         │
+├─────────────────────────────────────────────────────────┤
+│ ☑ ローカル失敗時にクラウドへフォールバック             │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 11. テスト戦略
 
 ### 決定: 手動テストのみ
 
@@ -425,3 +606,4 @@ class ShortsBackgroundConfig:
 | 日付 | 内容 |
 |------|------|
 | 2026-01-19 | 初版作成 |
+| 2026-01-19 | ハイブリッドLLM構成（Section 10）、Ollama自動セットアップを追加 |
