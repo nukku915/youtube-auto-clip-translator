@@ -425,3 +425,330 @@ for seg in result.segments:
 - [ ] ノイズが多い動画
 - [ ] 長時間動画（1時間以上）
 - [ ] GPU/CPU切り替え
+
+---
+
+## 15. 追加仕様
+
+### 15.1 多言語混在の処理
+
+1動画内で複数言語が話される場合の対処：
+
+```python
+@dataclass
+class MultiLanguageConfig:
+    # 主要言語を自動検出
+    detect_primary: bool = True
+
+    # 言語切り替えポイントを検出
+    detect_language_switches: bool = False  # MVP: オフ
+
+    # 言語ごとの閾値
+    min_segment_duration: float = 3.0  # 言語判定に必要な最小セグメント長
+
+async def process_multilingual(
+    audio_path: Path,
+    config: MultiLanguageConfig
+) -> TranscriptionResult:
+    """
+    多言語混在動画の処理
+
+    1. 音声の最初30秒で主要言語を検出
+    2. 主要言語で全体を文字起こし
+    3. 他言語部分は「ベストエフォート」で認識
+
+    注意: 頻繁に言語が切り替わる場合、精度低下の可能性あり
+    """
+    # 主要言語を検出
+    primary_language = await detect_language(audio_path)
+
+    # 主要言語で文字起こし
+    result = await transcribe(audio_path, language=primary_language)
+
+    # 低信頼度セグメントに警告フラグを付与
+    for segment in result.segments:
+        if segment.confidence < 0.5:
+            segment.flags.append("low_confidence_may_be_different_language")
+
+    return result
+```
+
+**ユーザー向けガイダンス**:
+```
+多言語が混在する動画の場合：
+- 主要な言語が自動検出されます
+- 他の言語部分は認識精度が低下する可能性があります
+- 字幕編集画面で手動修正を推奨します
+```
+
+### 15.2 ノイズ対策詳細
+
+#### ノイズ種別と対策
+
+| ノイズ種別 | 影響 | 対策 |
+|-----------|------|------|
+| BGM | 中〜高 | 音声分離フィルター（オプション） |
+| 環境音（街、風） | 低〜中 | ノイズゲート適用 |
+| 反響（エコー） | 中 | エコーキャンセル（限定的） |
+| 複数人同時発話 | 高 | 話者分離（diarization）推奨 |
+
+#### 音声前処理オプション
+
+```python
+@dataclass
+class AudioPreprocessConfig:
+    # 音量正規化
+    normalize: bool = True
+    target_dbfs: float = -20.0
+
+    # ノイズゲート（小さい音をカット）
+    noise_gate: bool = False
+    noise_gate_threshold: float = -50.0  # dB
+
+    # ハイパスフィルター（低周波ノイズ除去）
+    highpass_filter: bool = True
+    highpass_freq: int = 80  # Hz
+
+    # BGM分離（実験的機能）
+    separate_vocals: bool = False  # demucs使用、処理時間増大
+
+def preprocess_audio(
+    audio_path: Path,
+    config: AudioPreprocessConfig
+) -> Path:
+    """音声の前処理を適用"""
+    # FFmpegフィルターを構築
+    filters = []
+
+    if config.highpass_filter:
+        filters.append(f"highpass=f={config.highpass_freq}")
+
+    if config.normalize:
+        filters.append(f"loudnorm=I=-16:TP=-1.5:LRA=11")
+
+    if config.noise_gate:
+        filters.append(f"agate=threshold={config.noise_gate_threshold}dB")
+
+    # FFmpeg実行
+    ...
+```
+
+### 15.3 HuggingFace トークン取得手順
+
+話者分離（pyannote.audio）を使用するにはHuggingFaceトークンが必要：
+
+#### 取得手順
+
+1. **HuggingFaceアカウント作成**
+   - https://huggingface.co/join にアクセス
+   - アカウントを作成
+
+2. **モデル利用規約に同意**
+   - https://huggingface.co/pyannote/speaker-diarization-3.1 にアクセス
+   - 「Agree and access repository」をクリック
+
+3. **アクセストークン取得**
+   - https://huggingface.co/settings/tokens にアクセス
+   - 「New token」をクリック
+   - 名前を入力、タイプは「Read」を選択
+   - トークンをコピー
+
+4. **設定**
+   ```yaml
+   # config.yaml
+   whisper:
+     hf_token: "hf_xxxxxxxxxxxxxxxxxxxxxxxxxx"
+   ```
+   または環境変数:
+   ```bash
+   export HF_TOKEN="hf_xxxxxxxxxxxxxxxxxxxxxxxxxx"
+   ```
+
+### 15.4 モデルキャッシュ場所
+
+WhisperXおよび関連モデルの保存場所：
+
+```python
+MODEL_CACHE_PATHS = {
+    # WhisperXモデル（faster-whisper形式）
+    "whisper": Path.home() / ".cache" / "huggingface" / "hub",
+
+    # wav2vec2アライメントモデル
+    "alignment": Path.home() / ".cache" / "huggingface" / "hub",
+
+    # pyannote話者分離モデル
+    "diarization": Path.home() / ".cache" / "huggingface" / "hub",
+
+    # アプリ固有キャッシュ
+    "app_cache": Path.home() / ".youtube-auto-clip-translator" / "cache" / "models",
+}
+
+def get_model_cache_size() -> int:
+    """キャッシュサイズを取得（bytes）"""
+    total = 0
+    for name, path in MODEL_CACHE_PATHS.items():
+        if path.exists():
+            total += sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    return total
+
+def clear_model_cache(keep_recent: bool = True) -> int:
+    """キャッシュをクリア（解放容量を返す）"""
+    ...
+```
+
+**モデルサイズ目安**:
+| モデル | サイズ |
+|--------|--------|
+| distil-large-v3 | ~1.5GB |
+| large-v3 | ~3GB |
+| wav2vec2 (ja) | ~1GB |
+| pyannote | ~500MB |
+
+### 15.5 ストリーミング処理（長時間動画）
+
+長時間動画のメモリ効率的な処理：
+
+```python
+@dataclass
+class StreamingConfig:
+    # チャンクサイズ（秒）
+    chunk_duration: int = 300  # 5分
+
+    # チャンク間のオーバーラップ（秒）
+    overlap: int = 5
+
+    # メモリ制限（GB）
+    max_memory_gb: float = 8.0
+
+async def transcribe_streaming(
+    audio_path: Path,
+    config: StreamingConfig,
+    progress_callback: Callable[[float, str], None] = None
+) -> TranscriptionResult:
+    """
+    ストリーミング方式で文字起こし
+
+    - 音声を小さなチャンクに分割
+    - 各チャンクを順次処理
+    - 結果を結合してタイムスタンプを補正
+    """
+    audio_duration = get_audio_duration(audio_path)
+    all_segments = []
+
+    for start in range(0, int(audio_duration), config.chunk_duration - config.overlap):
+        end = min(start + config.chunk_duration, audio_duration)
+
+        # チャンクを抽出
+        chunk_path = extract_audio_chunk(audio_path, start, end)
+
+        # 文字起こし
+        result = await transcribe(chunk_path)
+
+        # タイムスタンプを補正してマージ
+        for segment in result.segments:
+            segment.start += start
+            segment.end += start
+            all_segments.append(segment)
+
+        # 進捗更新
+        if progress_callback:
+            progress = (end / audio_duration) * 100
+            progress_callback(progress, f"文字起こし中... {int(end)}秒 / {int(audio_duration)}秒")
+
+        # チャンクファイル削除
+        chunk_path.unlink()
+
+    # オーバーラップ部分の重複を解消
+    all_segments = merge_overlapping_segments(all_segments)
+
+    return TranscriptionResult(segments=all_segments, ...)
+```
+
+### 15.6 GPU VRAM不足時の動作
+
+```python
+class VRAMManager:
+    """VRAMの監視と自動調整"""
+
+    def __init__(self):
+        self.min_free_vram = 1.0  # 最低1GB空けておく
+
+    def get_available_vram(self) -> float:
+        """利用可能なVRAM（GB）"""
+        if not torch.cuda.is_available():
+            return 0.0
+        return (torch.cuda.get_device_properties(0).total_memory -
+                torch.cuda.memory_allocated(0)) / 1e9
+
+    def select_optimal_config(self) -> tuple[str, str, int]:
+        """
+        VRAMに基づいて最適な設定を選択
+
+        Returns:
+            (model_name, compute_type, batch_size)
+        """
+        available = self.get_available_vram()
+
+        if available >= 10:
+            return ("large-v3", "float16", 16)
+        elif available >= 6:
+            return ("distil-large-v3", "float16", 16)
+        elif available >= 4:
+            return ("distil-large-v3", "int8", 8)
+        elif available >= 2:
+            return ("medium", "int8", 4)
+        else:
+            # CPU fallback
+            return ("small", "int8", 1)
+
+    async def transcribe_with_vram_management(
+        self,
+        audio_path: Path
+    ) -> TranscriptionResult:
+        """VRAM不足時に自動調整して文字起こし"""
+        max_retries = 3
+
+        for attempt in range(max_retries):
+            model, compute_type, batch_size = self.select_optimal_config()
+
+            try:
+                return await transcribe(
+                    audio_path,
+                    model=model,
+                    compute_type=compute_type,
+                    batch_size=batch_size
+                )
+            except torch.cuda.OutOfMemoryError:
+                # VRAM解放
+                torch.cuda.empty_cache()
+                gc.collect()
+
+                # 次の試行では小さい設定を使用
+                self.min_free_vram += 1.0
+
+                if attempt == max_retries - 1:
+                    # 最終手段: CPUで実行
+                    return await transcribe(
+                        audio_path,
+                        model="small",
+                        device="cpu",
+                        compute_type="int8"
+                    )
+```
+
+**ユーザー通知**:
+```
+⚠️ GPUメモリが不足しています
+- モデルを small に変更しました
+- 処理時間が長くなります
+- 設定画面でモデルサイズを調整できます
+```
+
+---
+
+## 更新履歴
+
+| 日付 | 内容 |
+|------|------|
+| 2026-01-19 | 初版作成 |
+| 2026-01-19 | 追加仕様（多言語、ノイズ対策、VRAM管理等）を追記 |

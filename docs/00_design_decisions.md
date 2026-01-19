@@ -471,18 +471,39 @@ class ShortsBackgroundConfig:
 
 ---
 
-## 10. ハイブリッドLLM構成
+## 10. ハイブリッドLLM構成（2025年1月更新）
 
-### 決定: ローカルLLM（Ollama）+ クラウドLLM（Gemini）のハイブリッド
+### 決定: ローカルLLM（Ollama / MLX LM）+ クラウドLLM（Gemini）のハイブリッド
 
 コスト削減とオフライン対応のため、タスクに応じてローカルLLMとクラウドLLMを使い分ける。
+
+### ローカルLLMバックエンド選定
+
+| バックエンド | macOS (Apple Silicon) | Windows | 特徴 |
+|-------------|----------------------|---------|------|
+| **Ollama** | ✅ | ✅ | クロスプラットフォーム、安定、広くサポート |
+| **MLX LM** | ✅ **最速** | ❌ | Apple Silicon最適化、メモリ効率◎ |
+
+**方針:**
+- **基本: Ollama** - Windows/macOS両対応
+- **macOSオプション: MLX LM** - より高速な推論が必要な場合に選択可能
+- 両方とも **OpenAI互換API** を提供するため、抽象化レイヤーで切り替え可能
+
+### 推奨モデル
+
+| モデル | サイズ | 日本語 | 用途 |
+|--------|-------|--------|------|
+| **Qwen3** | 8B/14B | ◎ | 翻訳・見どころ検出（推奨） |
+| **Gemma-3** | 4B/12B/27B | ○ | 軽量版の選択肢 |
+
+**MVPでは `qwen3:8b` を推奨**（メモリ8GB程度で動作）
 
 ### 構成
 
 | プロバイダ | 用途 | モデル |
 |-----------|------|--------|
-| Ollama（ローカル） | 見どころ検出、チャプター検出 | gemma-2-jpn:2b |
-| Gemini（クラウド） | 翻訳、タイトル生成 | gemini-3-flash |
+| Ollama / MLX LM（ローカル） | 見どころ検出、チャプター検出、翻訳 | qwen3:8b |
+| Gemini（クラウド） | 高品質翻訳、タイトル生成、フォールバック | gemini-2.0-flash |
 
 ### タスク別振り分け
 
@@ -492,24 +513,30 @@ class LLMConfig:
     # プロバイダ設定
     provider: str = "hybrid"  # "local", "gemini", "hybrid"
 
-    # ローカルLLM（Ollama）設定
-    local_enabled: bool = True
-    local_model: str = "gemma-2-jpn:2b"
+    # ローカルLLMバックエンド設定
+    local_backend: str = "ollama"  # "ollama" or "mlx" (macOS only)
+
+    # Ollama設定
     ollama_host: str = "http://localhost:11434"
+    ollama_model: str = "qwen3:8b"
+
+    # MLX LM設定（macOSのみ）
+    mlx_model: str = "mlx-community/Qwen2.5-7B-Instruct-4bit"
 
     # クラウドLLM（Gemini）設定
     gemini_enabled: bool = True
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3-flash"
+    gemini_model: str = "gemini-2.0-flash"
 
-    # タスク振り分け
+    # タスク振り分け（MVPではローカル優先）
     use_local_for: List[str] = field(default_factory=lambda: [
         "highlight_detection",
         "chapter_detection",
+        "translation",  # ローカルでも翻訳可能
     ])
     use_gemini_for: List[str] = field(default_factory=lambda: [
-        "translation",
         "title_generation",
+        "high_quality_translation",  # 高品質が必要な場合
     ])
 
     # フォールバック
@@ -520,10 +547,25 @@ class LLMConfig:
 
 | タスク | 推奨 | 理由 |
 |--------|------|------|
-| 見どころ検出 | ローカル | テキスト分析のみ、精度要求が低め |
+| 見どころ検出 | ローカル | テキスト分析のみ、Qwen3で十分 |
 | チャプター検出 | ローカル | 構造認識、ローカルで十分 |
-| 翻訳 | クラウド | 高品質な翻訳が必要 |
+| 翻訳 | ローカル優先 | Qwen3は日本語翻訳に強い |
 | タイトル生成 | クラウド | 創造性・ニュアンスが重要 |
+
+### アーキテクチャ
+
+```
+┌─────────────────────────────────────────────────────┐
+│               LLMClient（抽象化レイヤー）              │
+│         OpenAI互換APIで統一インターフェース            │
+├─────────────────┬───────────────────────────────────┤
+│   OllamaClient  │        MLXClient                  │
+│  (Windows/macOS) │      (macOS only)                │
+├─────────────────┴───────────────────────────────────┤
+│                   GeminiClient                       │
+│                 （フォールバック用）                   │
+└─────────────────────────────────────────────────────┘
+```
 
 ### フォールバック動作
 
@@ -551,17 +593,17 @@ class LLMConfig:
 │                                                         │
 │ [モード選択]                                            │
 │ ○ ハイブリッド（推奨）- ローカル + クラウド併用         │
-│ ○ ローカルのみ - Ollama使用、オフライン動作可          │
+│ ○ ローカルのみ - オフライン動作可                      │
 │ ○ クラウドのみ - Gemini API使用                        │
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
-│ ローカルLLM (Ollama)                                    │
+│ ローカルLLM                                             │
 │ ┌─────────────────────────────────────────────────────┐ │
+│ │ バックエンド: ○ Ollama  ○ MLX LM (macOS)           │ │
 │ │ ステータス: ✓ 起動中                                │ │
-│ │ モデル: gemma-2-jpn:2b                              │ │
-│ │ ホスト: http://localhost:11434                      │ │
+│ │ モデル: qwen3:8b                                    │ │
 │ └─────────────────────────────────────────────────────┘ │
-│ [Ollama起動] [モデルダウンロード]                        │
+│ [サービス起動] [モデルダウンロード]                      │
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
 │ クラウドLLM (Gemini)                                    │

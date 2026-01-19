@@ -855,3 +855,1997 @@ class App(CTk):
 - [ ] 編集操作
 - [ ] 書き出し処理
 - [ ] エラーハンドリング
+
+---
+
+## 13. 追加仕様
+
+### 13.1 ウィンドウサイズ制約
+
+```python
+@dataclass
+class WindowConstraints:
+    """ウィンドウサイズ制約"""
+    min_width: int = 1024
+    min_height: int = 768
+    default_width: int = 1280
+    default_height: int = 800
+    max_width: int = None  # 制限なし
+    max_height: int = None  # 制限なし
+
+# ビュー別の推奨サイズ
+VIEW_SIZES = {
+    "home": {"width": 800, "height": 600},
+    "processing": {"width": 600, "height": 400},
+    "editor": {"width": 1400, "height": 900},  # 大きめを推奨
+    "preview": {"width": 1000, "height": 700},
+    "export": {"width": 700, "height": 600},
+    "settings": {"width": 600, "height": 700},
+}
+
+class App(CTk):
+    def __init__(self):
+        super().__init__()
+
+        # 最小サイズ設定
+        self.minsize(
+            WindowConstraints.min_width,
+            WindowConstraints.min_height
+        )
+
+        # 初期サイズ設定
+        self.geometry(f"{WindowConstraints.default_width}x{WindowConstraints.default_height}")
+
+        # ウィンドウ位置を画面中央に
+        self._center_window()
+
+    def _center_window(self):
+        """ウィンドウを画面中央に配置"""
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def navigate_to(self, view_name: str) -> None:
+        """ビュー切り替え時にサイズ調整を提案"""
+        recommended = VIEW_SIZES.get(view_name)
+        if recommended:
+            current_w = self.winfo_width()
+            current_h = self.winfo_height()
+            # 現在サイズが小さすぎる場合のみ調整
+            if current_w < recommended["width"] or current_h < recommended["height"]:
+                new_w = max(current_w, recommended["width"])
+                new_h = max(current_h, recommended["height"])
+                self.geometry(f"{new_w}x{new_h}")
+```
+
+### 13.2 高DPI/Retina対応
+
+```python
+import platform
+import ctypes
+
+class DPIManager:
+    """高DPI環境の検出と対応"""
+
+    def __init__(self):
+        self.scale_factor = self._detect_scale_factor()
+
+    def _detect_scale_factor(self) -> float:
+        """システムのスケールファクターを検出"""
+        system = platform.system()
+
+        if system == "Windows":
+            return self._get_windows_scale()
+        elif system == "Darwin":  # macOS
+            return self._get_macos_scale()
+        else:  # Linux
+            return self._get_linux_scale()
+
+    def _get_windows_scale(self) -> float:
+        """Windows DPIスケール取得"""
+        try:
+            # DPI Awareness設定
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            # 現在のDPI取得
+            dc = ctypes.windll.user32.GetDC(0)
+            dpi = ctypes.windll.gdi32.GetDeviceCaps(dc, 88)  # LOGPIXELSX
+            ctypes.windll.user32.ReleaseDC(0, dc)
+            return dpi / 96.0
+        except Exception:
+            return 1.0
+
+    def _get_macos_scale(self) -> float:
+        """macOS Retina検出"""
+        try:
+            from AppKit import NSScreen
+            main_screen = NSScreen.mainScreen()
+            return main_screen.backingScaleFactor()
+        except ImportError:
+            # AppKitが利用できない場合
+            return 2.0 if self._is_retina_display() else 1.0
+
+    def _is_retina_display(self) -> bool:
+        """Retina判定（フォールバック）"""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType"],
+                capture_output=True, text=True
+            )
+            return "Retina" in result.stdout
+        except Exception:
+            return False
+
+    def _get_linux_scale(self) -> float:
+        """Linux スケール取得"""
+        import os
+        # GDK_SCALE環境変数を確認
+        gdk_scale = os.environ.get("GDK_SCALE", "1")
+        try:
+            return float(gdk_scale)
+        except ValueError:
+            return 1.0
+
+    def scale_font_size(self, base_size: int) -> int:
+        """フォントサイズをスケーリング"""
+        # 高DPI環境ではCustomTkinterが自動調整するため
+        # 追加のスケーリングは不要な場合が多い
+        return base_size
+
+    def scale_padding(self, base_padding: int) -> int:
+        """パディングをスケーリング"""
+        return int(base_padding * self.scale_factor)
+
+
+# CustomTkinter設定
+def configure_dpi_settings():
+    """DPI設定を適用"""
+    dpi_manager = DPIManager()
+
+    # CustomTkinterのスケーリング設定
+    import customtkinter as ctk
+
+    if dpi_manager.scale_factor >= 2.0:
+        # Retina/4K環境
+        ctk.set_widget_scaling(1.0)  # ウィジェットスケール
+        ctk.set_window_scaling(1.0)  # ウィンドウスケール
+    else:
+        # 通常環境
+        ctk.set_widget_scaling(dpi_manager.scale_factor)
+        ctk.set_window_scaling(dpi_manager.scale_factor)
+```
+
+### 13.3 複数モニタ対応
+
+```python
+from dataclasses import dataclass
+from typing import List, Optional
+import tkinter as tk
+
+@dataclass
+class MonitorInfo:
+    """モニタ情報"""
+    index: int
+    x: int
+    y: int
+    width: int
+    height: int
+    is_primary: bool
+    name: str = ""
+
+class MultiMonitorManager:
+    """複数モニタ対応"""
+
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.monitors = self._detect_monitors()
+
+    def _detect_monitors(self) -> List[MonitorInfo]:
+        """接続されているモニタを検出"""
+        monitors = []
+
+        try:
+            # screeninfoライブラリを使用（推奨）
+            from screeninfo import get_monitors
+            for i, m in enumerate(get_monitors()):
+                monitors.append(MonitorInfo(
+                    index=i,
+                    x=m.x,
+                    y=m.y,
+                    width=m.width,
+                    height=m.height,
+                    is_primary=m.is_primary,
+                    name=m.name or f"Monitor {i}"
+                ))
+        except ImportError:
+            # フォールバック: プライマリモニタのみ
+            monitors.append(MonitorInfo(
+                index=0,
+                x=0,
+                y=0,
+                width=self.root.winfo_screenwidth(),
+                height=self.root.winfo_screenheight(),
+                is_primary=True,
+                name="Primary"
+            ))
+
+        return monitors
+
+    def get_primary_monitor(self) -> Optional[MonitorInfo]:
+        """プライマリモニタを取得"""
+        for m in self.monitors:
+            if m.is_primary:
+                return m
+        return self.monitors[0] if self.monitors else None
+
+    def get_current_monitor(self) -> Optional[MonitorInfo]:
+        """ウィンドウがあるモニタを取得"""
+        x = self.root.winfo_x()
+        y = self.root.winfo_y()
+
+        for m in self.monitors:
+            if (m.x <= x < m.x + m.width and
+                m.y <= y < m.y + m.height):
+                return m
+
+        return self.get_primary_monitor()
+
+    def center_on_monitor(self, monitor: MonitorInfo) -> None:
+        """指定モニタの中央にウィンドウを配置"""
+        self.root.update_idletasks()
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+
+        x = monitor.x + (monitor.width - w) // 2
+        y = monitor.y + (monitor.height - h) // 2
+
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
+
+    def maximize_on_current_monitor(self) -> None:
+        """現在のモニタで最大化"""
+        monitor = self.get_current_monitor()
+        if monitor:
+            # タスクバー分を考慮した調整
+            taskbar_height = 40  # 概算値
+            self.root.geometry(
+                f"{monitor.width}x{monitor.height - taskbar_height}"
+                f"+{monitor.x}+{monitor.y}"
+            )
+
+    def remember_window_position(self) -> dict:
+        """ウィンドウ位置を記憶"""
+        return {
+            "x": self.root.winfo_x(),
+            "y": self.root.winfo_y(),
+            "width": self.root.winfo_width(),
+            "height": self.root.winfo_height(),
+            "monitor_index": self.get_current_monitor().index
+                if self.get_current_monitor() else 0
+        }
+
+    def restore_window_position(self, position: dict) -> None:
+        """ウィンドウ位置を復元"""
+        # モニタが存在するか確認
+        target_monitor = None
+        for m in self.monitors:
+            if m.index == position.get("monitor_index", 0):
+                target_monitor = m
+                break
+
+        if target_monitor:
+            # 保存位置がモニタ範囲内か確認
+            x = position.get("x", 0)
+            y = position.get("y", 0)
+            if (target_monitor.x <= x < target_monitor.x + target_monitor.width and
+                target_monitor.y <= y < target_monitor.y + target_monitor.height):
+                self.root.geometry(
+                    f"{position['width']}x{position['height']}+{x}+{y}"
+                )
+                return
+
+        # 復元できない場合はプライマリモニタの中央に
+        primary = self.get_primary_monitor()
+        if primary:
+            self.center_on_monitor(primary)
+```
+
+### 13.4 Undo/Redo実装詳細
+
+```python
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, List, Optional
+import copy
+
+class Command(ABC):
+    """Undoable操作の基底クラス"""
+
+    @abstractmethod
+    def execute(self) -> None:
+        """操作を実行"""
+        pass
+
+    @abstractmethod
+    def undo(self) -> None:
+        """操作を取り消し"""
+        pass
+
+    @property
+    @abstractmethod
+    def description(self) -> str:
+        """操作の説明（UI表示用）"""
+        pass
+
+
+@dataclass
+class EditSubtitleCommand(Command):
+    """字幕編集コマンド"""
+    subtitle_manager: Any  # SubtitleManager
+    index: int
+    old_text: str
+    new_text: str
+    field: str  # "original" or "translated"
+
+    def execute(self) -> None:
+        self.subtitle_manager.update_text(
+            self.index, self.field, self.new_text
+        )
+
+    def undo(self) -> None:
+        self.subtitle_manager.update_text(
+            self.index, self.field, self.old_text
+        )
+
+    @property
+    def description(self) -> str:
+        return f"字幕#{self.index + 1}を編集"
+
+
+@dataclass
+class EditSubtitleTimingCommand(Command):
+    """字幕タイミング編集コマンド"""
+    subtitle_manager: Any
+    index: int
+    old_start: float
+    old_end: float
+    new_start: float
+    new_end: float
+
+    def execute(self) -> None:
+        self.subtitle_manager.update_timing(
+            self.index, self.new_start, self.new_end
+        )
+
+    def undo(self) -> None:
+        self.subtitle_manager.update_timing(
+            self.index, self.old_start, self.old_end
+        )
+
+    @property
+    def description(self) -> str:
+        return f"字幕#{self.index + 1}のタイミングを編集"
+
+
+@dataclass
+class EditSegmentCommand(Command):
+    """セグメント編集コマンド"""
+    segment_manager: Any
+    segment_id: int
+    old_state: dict
+    new_state: dict
+
+    def execute(self) -> None:
+        self.segment_manager.update_segment(self.segment_id, self.new_state)
+
+    def undo(self) -> None:
+        self.segment_manager.update_segment(self.segment_id, self.old_state)
+
+    @property
+    def description(self) -> str:
+        return f"セグメント「{self.old_state.get('title', '')}」を編集"
+
+
+@dataclass
+class ToggleSegmentCommand(Command):
+    """セグメント選択切り替えコマンド"""
+    segment_manager: Any
+    segment_id: int
+    old_selected: bool
+    new_selected: bool
+
+    def execute(self) -> None:
+        self.segment_manager.set_selected(self.segment_id, self.new_selected)
+
+    def undo(self) -> None:
+        self.segment_manager.set_selected(self.segment_id, self.old_selected)
+
+    @property
+    def description(self) -> str:
+        action = "選択" if self.new_selected else "選択解除"
+        return f"セグメントを{action}"
+
+
+@dataclass
+class CompositeCommand(Command):
+    """複数コマンドをまとめたコマンド"""
+    commands: List[Command]
+    _description: str = "複合操作"
+
+    def execute(self) -> None:
+        for cmd in self.commands:
+            cmd.execute()
+
+    def undo(self) -> None:
+        # 逆順でundo
+        for cmd in reversed(self.commands):
+            cmd.undo()
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+
+class UndoManager:
+    """Undo/Redo管理"""
+
+    def __init__(self, max_history: int = 100):
+        self.max_history = max_history
+        self._undo_stack: List[Command] = []
+        self._redo_stack: List[Command] = []
+        self._observers: List[callable] = []
+
+    def execute(self, command: Command) -> None:
+        """コマンドを実行してUndoスタックに追加"""
+        command.execute()
+        self._undo_stack.append(command)
+
+        # Redo履歴をクリア
+        self._redo_stack.clear()
+
+        # 履歴数制限
+        if len(self._undo_stack) > self.max_history:
+            self._undo_stack.pop(0)
+
+        self._notify_observers()
+
+    def undo(self) -> Optional[str]:
+        """最後の操作を取り消し"""
+        if not self.can_undo():
+            return None
+
+        command = self._undo_stack.pop()
+        command.undo()
+        self._redo_stack.append(command)
+
+        self._notify_observers()
+        return command.description
+
+    def redo(self) -> Optional[str]:
+        """取り消した操作をやり直し"""
+        if not self.can_redo():
+            return None
+
+        command = self._redo_stack.pop()
+        command.execute()
+        self._undo_stack.append(command)
+
+        self._notify_observers()
+        return command.description
+
+    def can_undo(self) -> bool:
+        """Undo可能かどうか"""
+        return len(self._undo_stack) > 0
+
+    def can_redo(self) -> bool:
+        """Redo可能かどうか"""
+        return len(self._redo_stack) > 0
+
+    def get_undo_description(self) -> Optional[str]:
+        """次のUndo操作の説明"""
+        if self._undo_stack:
+            return self._undo_stack[-1].description
+        return None
+
+    def get_redo_description(self) -> Optional[str]:
+        """次のRedo操作の説明"""
+        if self._redo_stack:
+            return self._redo_stack[-1].description
+        return None
+
+    def clear(self) -> None:
+        """履歴をクリア"""
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._notify_observers()
+
+    def subscribe(self, callback: callable) -> None:
+        """状態変更の通知を購読"""
+        self._observers.append(callback)
+
+    def _notify_observers(self) -> None:
+        """オブザーバーに通知"""
+        for callback in self._observers:
+            callback(self.can_undo(), self.can_redo())
+
+
+# キーボードショートカット連携
+class EditorView(CTkFrame):
+    def __init__(self, parent, undo_manager: UndoManager):
+        super().__init__(parent)
+        self.undo_manager = undo_manager
+
+        # Undo/Redoボタンの状態を同期
+        self.undo_manager.subscribe(self._update_undo_buttons)
+
+    def _update_undo_buttons(self, can_undo: bool, can_redo: bool):
+        """Undo/Redoボタンの有効/無効を更新"""
+        self.undo_button.configure(state="normal" if can_undo else "disabled")
+        self.redo_button.configure(state="normal" if can_redo else "disabled")
+
+        # ツールチップも更新
+        if can_undo:
+            undo_desc = self.undo_manager.get_undo_description()
+            self.undo_button.configure(
+                tooltip=f"元に戻す: {undo_desc} (Ctrl+Z)"
+            )
+```
+
+### 13.5 ドラッグ&ドロップ詳細
+
+```python
+from enum import Enum
+from dataclasses import dataclass
+from typing import Optional, Callable, Any
+import tkinter as tk
+import tkinter.dnd as tkdnd
+
+class DragType(Enum):
+    """ドラッグの種類"""
+    SEGMENT = "segment"      # セグメントの並び替え
+    TIMELINE = "timeline"    # タイムライン上での範囲変更
+    FILE = "file"           # 外部ファイルのドロップ
+
+@dataclass
+class DragData:
+    """ドラッグ中のデータ"""
+    drag_type: DragType
+    source_index: Optional[int] = None
+    source_widget: Optional[tk.Widget] = None
+    data: Any = None
+
+class DragDropManager:
+    """ドラッグ&ドロップ管理"""
+
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.drag_data: Optional[DragData] = None
+        self.drop_targets: list = []
+
+        # ドラッグカーソル用のウィンドウ
+        self.drag_label: Optional[tk.Toplevel] = None
+
+    def start_drag(
+        self,
+        event: tk.Event,
+        drag_type: DragType,
+        data: Any,
+        label_text: str = ""
+    ) -> None:
+        """ドラッグ開始"""
+        self.drag_data = DragData(
+            drag_type=drag_type,
+            source_widget=event.widget,
+            data=data
+        )
+
+        # ドラッグ中の視覚フィードバック
+        if label_text:
+            self._create_drag_label(event, label_text)
+
+        # マウスイベントをバインド
+        self.root.bind("<Motion>", self._on_drag_motion)
+        self.root.bind("<ButtonRelease-1>", self._on_drag_end)
+
+    def _create_drag_label(self, event: tk.Event, text: str) -> None:
+        """ドラッグ中に表示するラベル"""
+        self.drag_label = tk.Toplevel(self.root)
+        self.drag_label.overrideredirect(True)  # ウィンドウ枠なし
+        self.drag_label.attributes("-alpha", 0.8)  # 半透明
+
+        label = tk.Label(
+            self.drag_label,
+            text=text,
+            bg="#3b82f6",
+            fg="white",
+            padx=10,
+            pady=5
+        )
+        label.pack()
+
+        self._update_drag_label_position(event)
+
+    def _update_drag_label_position(self, event: tk.Event) -> None:
+        """ドラッグラベルの位置を更新"""
+        if self.drag_label:
+            self.drag_label.geometry(f"+{event.x_root + 10}+{event.y_root + 10}")
+
+    def _on_drag_motion(self, event: tk.Event) -> None:
+        """ドラッグ中のマウス移動"""
+        self._update_drag_label_position(event)
+
+        # ドロップターゲットのハイライト
+        for target in self.drop_targets:
+            if self._is_over_widget(event, target["widget"]):
+                target["widget"].configure(
+                    highlightbackground="#3b82f6",
+                    highlightthickness=2
+                )
+            else:
+                target["widget"].configure(highlightthickness=0)
+
+    def _on_drag_end(self, event: tk.Event) -> None:
+        """ドラッグ終了"""
+        # ドラッグラベルを削除
+        if self.drag_label:
+            self.drag_label.destroy()
+            self.drag_label = None
+
+        # ドロップ処理
+        if self.drag_data:
+            for target in self.drop_targets:
+                if (self._is_over_widget(event, target["widget"]) and
+                    target["accepts"](self.drag_data.drag_type)):
+                    target["on_drop"](self.drag_data, event)
+                    break
+
+        # クリーンアップ
+        self.drag_data = None
+        self.root.unbind("<Motion>")
+        self.root.unbind("<ButtonRelease-1>")
+
+        # ハイライトをリセット
+        for target in self.drop_targets:
+            target["widget"].configure(highlightthickness=0)
+
+    def _is_over_widget(self, event: tk.Event, widget: tk.Widget) -> bool:
+        """カーソルがウィジェット上にあるか"""
+        try:
+            x = widget.winfo_rootx()
+            y = widget.winfo_rooty()
+            w = widget.winfo_width()
+            h = widget.winfo_height()
+            return x <= event.x_root < x + w and y <= event.y_root < y + h
+        except tk.TclError:
+            return False
+
+    def register_drop_target(
+        self,
+        widget: tk.Widget,
+        accepts: Callable[[DragType], bool],
+        on_drop: Callable[[DragData, tk.Event], None]
+    ) -> None:
+        """ドロップターゲットを登録"""
+        self.drop_targets.append({
+            "widget": widget,
+            "accepts": accepts,
+            "on_drop": on_drop
+        })
+
+
+# セグメントリストでの使用例
+class SegmentList(CTkScrollableFrame):
+    def __init__(self, parent, drag_drop_manager: DragDropManager):
+        super().__init__(parent)
+        self.dd_manager = drag_drop_manager
+        self.segments: List[dict] = []
+
+        # ドロップターゲットとして登録
+        self.dd_manager.register_drop_target(
+            widget=self,
+            accepts=lambda t: t == DragType.SEGMENT,
+            on_drop=self._on_segment_drop
+        )
+
+    def _create_segment_item(self, index: int, segment: dict) -> CTkFrame:
+        """セグメントアイテムを作成"""
+        frame = CTkFrame(self)
+
+        # ドラッグハンドル
+        handle = CTkLabel(frame, text="⠿", cursor="fleur")
+        handle.bind("<Button-1>", lambda e: self._start_segment_drag(e, index))
+
+        return frame
+
+    def _start_segment_drag(self, event: tk.Event, index: int) -> None:
+        """セグメントのドラッグを開始"""
+        segment = self.segments[index]
+        self.dd_manager.start_drag(
+            event=event,
+            drag_type=DragType.SEGMENT,
+            data={"index": index, "segment": segment},
+            label_text=segment.get("title", f"セグメント {index + 1}")
+        )
+
+    def _on_segment_drop(self, drag_data: DragData, event: tk.Event) -> None:
+        """セグメントがドロップされた"""
+        source_index = drag_data.data["index"]
+        target_index = self._get_drop_index(event)
+
+        if source_index != target_index:
+            # セグメントの順序を変更
+            segment = self.segments.pop(source_index)
+            self.segments.insert(target_index, segment)
+            self._refresh_list()
+
+            # Undoコマンドとして記録
+            self.on_reorder_callback(source_index, target_index)
+
+
+# 外部ファイルドロップ（URLやファイル）
+class HomeView(CTkFrame):
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        # TkinterDnDを使用（要インストール）
+        try:
+            self.drop_target_register(tkdnd.DND_FILES)
+            self.dnd_bind("<<Drop>>", self._on_file_drop)
+        except Exception:
+            # TkinterDnDが利用できない場合はスキップ
+            pass
+
+    def _on_file_drop(self, event) -> None:
+        """ファイルがドロップされた"""
+        files = event.data.split()
+        for file_path in files:
+            # ファイルパスを処理
+            if file_path.endswith((".mp4", ".mkv", ".webm")):
+                self._load_local_video(file_path)
+```
+
+### 13.6 フォーカス管理
+
+```python
+from enum import Enum
+from typing import Optional, List
+import tkinter as tk
+
+class FocusGroup(Enum):
+    """フォーカスグループ"""
+    MAIN_MENU = "main_menu"
+    VIDEO_PLAYER = "video_player"
+    TIMELINE = "timeline"
+    SEGMENT_LIST = "segment_list"
+    SUBTITLE_TABLE = "subtitle_table"
+    DIALOG = "dialog"
+
+class FocusManager:
+    """キーボードフォーカス管理"""
+
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.focus_groups: dict[FocusGroup, List[tk.Widget]] = {}
+        self.current_group: Optional[FocusGroup] = None
+        self.focus_history: List[tk.Widget] = []
+
+        # グローバルキーバインド
+        self.root.bind("<Tab>", self._on_tab)
+        self.root.bind("<Shift-Tab>", self._on_shift_tab)
+        self.root.bind("<Escape>", self._on_escape)
+
+    def register_widget(
+        self,
+        widget: tk.Widget,
+        group: FocusGroup,
+        tab_order: int = 0
+    ) -> None:
+        """ウィジェットをフォーカスグループに登録"""
+        if group not in self.focus_groups:
+            self.focus_groups[group] = []
+
+        self.focus_groups[group].append({
+            "widget": widget,
+            "order": tab_order
+        })
+
+        # ソート
+        self.focus_groups[group].sort(key=lambda x: x["order"])
+
+        # フォーカスイン/アウトイベント
+        widget.bind("<FocusIn>", lambda e: self._on_focus_in(widget, group))
+        widget.bind("<FocusOut>", lambda e: self._on_focus_out(widget))
+
+    def _on_focus_in(self, widget: tk.Widget, group: FocusGroup) -> None:
+        """フォーカスを受け取った"""
+        self.current_group = group
+        self.focus_history.append(widget)
+
+        # 視覚的フィードバック
+        self._highlight_focused(widget)
+
+    def _on_focus_out(self, widget: tk.Widget) -> None:
+        """フォーカスを失った"""
+        self._remove_highlight(widget)
+
+    def _highlight_focused(self, widget: tk.Widget) -> None:
+        """フォーカス中のウィジェットをハイライト"""
+        try:
+            # CustomTkinterの場合
+            if hasattr(widget, "configure"):
+                widget.configure(border_color="#3b82f6")
+        except Exception:
+            pass
+
+    def _remove_highlight(self, widget: tk.Widget) -> None:
+        """ハイライトを解除"""
+        try:
+            if hasattr(widget, "configure"):
+                widget.configure(border_color="gray50")
+        except Exception:
+            pass
+
+    def _on_tab(self, event: tk.Event) -> str:
+        """Tab キーでフォーカス移動"""
+        if self.current_group and self.current_group in self.focus_groups:
+            widgets = self.focus_groups[self.current_group]
+            current = self.root.focus_get()
+
+            # 現在のインデックスを見つける
+            current_idx = -1
+            for i, item in enumerate(widgets):
+                if item["widget"] == current:
+                    current_idx = i
+                    break
+
+            # 次のウィジェットにフォーカス
+            next_idx = (current_idx + 1) % len(widgets)
+            widgets[next_idx]["widget"].focus_set()
+
+            return "break"  # デフォルトの動作を抑制
+
+        return None
+
+    def _on_shift_tab(self, event: tk.Event) -> str:
+        """Shift+Tab で逆方向にフォーカス移動"""
+        if self.current_group and self.current_group in self.focus_groups:
+            widgets = self.focus_groups[self.current_group]
+            current = self.root.focus_get()
+
+            current_idx = -1
+            for i, item in enumerate(widgets):
+                if item["widget"] == current:
+                    current_idx = i
+                    break
+
+            # 前のウィジェットにフォーカス
+            prev_idx = (current_idx - 1) % len(widgets)
+            widgets[prev_idx]["widget"].focus_set()
+
+            return "break"
+
+        return None
+
+    def _on_escape(self, event: tk.Event) -> None:
+        """Escape でフォーカス解除または前のフォーカスに戻る"""
+        if len(self.focus_history) > 1:
+            # 現在のフォーカスを履歴から削除
+            self.focus_history.pop()
+            # 前のウィジェットにフォーカス
+            prev_widget = self.focus_history[-1]
+            if prev_widget.winfo_exists():
+                prev_widget.focus_set()
+        else:
+            # ルートにフォーカスを戻す
+            self.root.focus_set()
+
+    def set_focus_group(self, group: FocusGroup) -> None:
+        """フォーカスグループを切り替え"""
+        if group in self.focus_groups and self.focus_groups[group]:
+            self.current_group = group
+            self.focus_groups[group][0]["widget"].focus_set()
+
+    def focus_dialog(self, dialog: tk.Toplevel) -> None:
+        """ダイアログにフォーカスを移動"""
+        dialog.transient(self.root)
+        dialog.grab_set()  # モーダル
+        dialog.focus_set()
+
+    def release_dialog(self) -> None:
+        """ダイアログからフォーカスを戻す"""
+        if self.focus_history:
+            last_widget = self.focus_history[-1]
+            if last_widget.winfo_exists():
+                last_widget.focus_set()
+
+
+# アクセシビリティ対応
+class AccessibleWidget:
+    """アクセシビリティ対応のミックスイン"""
+
+    def set_accessible_name(self, name: str) -> None:
+        """スクリーンリーダー用の名前を設定"""
+        # Tkinterには直接的なARIAサポートはないが、
+        # ツールチップやヘルプテキストで代用
+        if hasattr(self, "configure"):
+            try:
+                self.configure(cursor="hand2")
+            except Exception:
+                pass
+
+    def set_accessible_description(self, description: str) -> None:
+        """スクリーンリーダー用の説明を設定"""
+        pass  # カスタムツールチップで代用
+```
+
+### 13.7 エラー表示UI
+
+```python
+from dataclasses import dataclass
+from enum import Enum
+from typing import Optional, List, Callable
+import customtkinter as ctk
+from datetime import datetime
+
+class ErrorSeverity(Enum):
+    """エラーの深刻度"""
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+@dataclass
+class ErrorInfo:
+    """エラー情報"""
+    code: str               # YACT-XXX形式
+    message: str            # ユーザー向けメッセージ
+    severity: ErrorSeverity
+    timestamp: datetime
+    details: Optional[str] = None  # 技術的詳細
+    action: Optional[str] = None   # 推奨アクション
+    retry_callback: Optional[Callable] = None  # リトライ可能な場合
+
+# 色設定
+ERROR_COLORS = {
+    ErrorSeverity.INFO: {
+        "bg": "#3b82f6",      # 青
+        "icon": "ℹ️"
+    },
+    ErrorSeverity.WARNING: {
+        "bg": "#f59e0b",      # 黄
+        "icon": "⚠️"
+    },
+    ErrorSeverity.ERROR: {
+        "bg": "#ef4444",      # 赤
+        "icon": "❌"
+    },
+    ErrorSeverity.CRITICAL: {
+        "bg": "#7f1d1d",      # 濃い赤
+        "icon": "🚨"
+    },
+}
+
+
+class ToastNotification(ctk.CTkFrame):
+    """トースト通知コンポーネント"""
+
+    def __init__(
+        self,
+        parent,
+        error: ErrorInfo,
+        on_close: Callable = None,
+        auto_dismiss: bool = True,
+        dismiss_after_ms: int = 5000
+    ):
+        super().__init__(parent)
+        self.error = error
+        self.on_close = on_close
+
+        colors = ERROR_COLORS[error.severity]
+        self.configure(fg_color=colors["bg"], corner_radius=8)
+
+        # レイアウト
+        # アイコン
+        icon_label = ctk.CTkLabel(
+            self,
+            text=colors["icon"],
+            font=("", 20)
+        )
+        icon_label.pack(side="left", padx=(10, 5))
+
+        # メッセージエリア
+        msg_frame = ctk.CTkFrame(self, fg_color="transparent")
+        msg_frame.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+
+        # エラーコード + メッセージ
+        ctk.CTkLabel(
+            msg_frame,
+            text=f"[{error.code}] {error.message}",
+            font=("", 12, "bold"),
+            text_color="white",
+            anchor="w"
+        ).pack(fill="x")
+
+        # 推奨アクション
+        if error.action:
+            ctk.CTkLabel(
+                msg_frame,
+                text=error.action,
+                font=("", 11),
+                text_color="#e5e7eb",
+                anchor="w"
+            ).pack(fill="x")
+
+        # ボタンエリア
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(side="right", padx=5)
+
+        # リトライボタン
+        if error.retry_callback:
+            retry_btn = ctk.CTkButton(
+                btn_frame,
+                text="リトライ",
+                width=60,
+                height=24,
+                command=lambda: self._on_retry()
+            )
+            retry_btn.pack(side="left", padx=2)
+
+        # 詳細ボタン
+        if error.details:
+            detail_btn = ctk.CTkButton(
+                btn_frame,
+                text="詳細",
+                width=50,
+                height=24,
+                command=lambda: self._show_details()
+            )
+            detail_btn.pack(side="left", padx=2)
+
+        # 閉じるボタン
+        close_btn = ctk.CTkButton(
+            btn_frame,
+            text="×",
+            width=24,
+            height=24,
+            command=self._close
+        )
+        close_btn.pack(side="left", padx=2)
+
+        # 自動消去
+        if auto_dismiss and error.severity in [ErrorSeverity.INFO, ErrorSeverity.WARNING]:
+            self.after(dismiss_after_ms, self._close)
+
+    def _close(self):
+        """通知を閉じる"""
+        if self.on_close:
+            self.on_close()
+        self.destroy()
+
+    def _on_retry(self):
+        """リトライ実行"""
+        if self.error.retry_callback:
+            self._close()
+            self.error.retry_callback()
+
+    def _show_details(self):
+        """詳細ダイアログを表示"""
+        ErrorDetailDialog(self.winfo_toplevel(), self.error)
+
+
+class ErrorDetailDialog(ctk.CTkToplevel):
+    """エラー詳細ダイアログ"""
+
+    def __init__(self, parent, error: ErrorInfo):
+        super().__init__(parent)
+
+        self.title(f"エラー詳細 - {error.code}")
+        self.geometry("500x400")
+        self.transient(parent)
+        self.grab_set()
+
+        # コンテンツ
+        content = ctk.CTkScrollableFrame(self)
+        content.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # エラーコード
+        ctk.CTkLabel(
+            content,
+            text=f"エラーコード: {error.code}",
+            font=("", 14, "bold")
+        ).pack(anchor="w", pady=(0, 10))
+
+        # 深刻度
+        colors = ERROR_COLORS[error.severity]
+        severity_label = ctk.CTkLabel(
+            content,
+            text=f"{colors['icon']} {error.severity.value.upper()}",
+            fg_color=colors["bg"],
+            corner_radius=4,
+            padx=8,
+            pady=2
+        )
+        severity_label.pack(anchor="w", pady=(0, 10))
+
+        # メッセージ
+        ctk.CTkLabel(
+            content,
+            text="メッセージ:",
+            font=("", 12, "bold")
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            content,
+            text=error.message,
+            wraplength=450
+        ).pack(anchor="w", pady=(0, 10))
+
+        # 詳細（技術情報）
+        if error.details:
+            ctk.CTkLabel(
+                content,
+                text="技術的詳細:",
+                font=("", 12, "bold")
+            ).pack(anchor="w")
+
+            detail_text = ctk.CTkTextbox(content, height=150)
+            detail_text.pack(fill="x", pady=(0, 10))
+            detail_text.insert("1.0", error.details)
+            detail_text.configure(state="disabled")
+
+        # 推奨アクション
+        if error.action:
+            ctk.CTkLabel(
+                content,
+                text="推奨アクション:",
+                font=("", 12, "bold")
+            ).pack(anchor="w")
+            ctk.CTkLabel(
+                content,
+                text=error.action,
+                wraplength=450
+            ).pack(anchor="w", pady=(0, 10))
+
+        # タイムスタンプ
+        ctk.CTkLabel(
+            content,
+            text=f"発生日時: {error.timestamp.strftime('%Y-%m-%d %H:%M:%S')}",
+            text_color="gray"
+        ).pack(anchor="w")
+
+        # ボタン
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=10)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="クリップボードにコピー",
+            command=lambda: self._copy_to_clipboard(error)
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            btn_frame,
+            text="閉じる",
+            command=self.destroy
+        ).pack(side="right")
+
+    def _copy_to_clipboard(self, error: ErrorInfo):
+        """エラー情報をクリップボードにコピー"""
+        text = f"""
+エラーコード: {error.code}
+深刻度: {error.severity.value}
+メッセージ: {error.message}
+詳細: {error.details or 'なし'}
+発生日時: {error.timestamp.isoformat()}
+""".strip()
+
+        self.clipboard_clear()
+        self.clipboard_append(text)
+
+
+class ErrorNotificationManager:
+    """エラー通知管理"""
+
+    def __init__(self, parent: ctk.CTk):
+        self.parent = parent
+        self.notifications: List[ToastNotification] = []
+        self.max_visible = 5
+
+        # 通知エリア（画面右下）
+        self.notification_container = ctk.CTkFrame(
+            parent,
+            fg_color="transparent"
+        )
+        self.notification_container.place(
+            relx=1.0, rely=1.0,
+            anchor="se",
+            x=-20, y=-20
+        )
+
+    def show_error(self, error: ErrorInfo) -> None:
+        """エラー通知を表示"""
+        # 最大数を超えている場合は古いものを削除
+        while len(self.notifications) >= self.max_visible:
+            self.notifications[0].destroy()
+            self.notifications.pop(0)
+
+        toast = ToastNotification(
+            self.notification_container,
+            error,
+            on_close=lambda: self._on_notification_close(toast)
+        )
+        toast.pack(pady=5, fill="x")
+        self.notifications.append(toast)
+
+    def _on_notification_close(self, toast: ToastNotification):
+        """通知が閉じられた"""
+        if toast in self.notifications:
+            self.notifications.remove(toast)
+```
+
+### 13.8 初回起動オンボーディング
+
+```python
+from dataclasses import dataclass
+from typing import List, Optional, Callable
+import customtkinter as ctk
+
+@dataclass
+class OnboardingStep:
+    """オンボーディングステップ"""
+    title: str
+    description: str
+    image_path: Optional[str] = None
+    action: Optional[Callable] = None
+    action_label: str = ""
+    skip_if: Optional[Callable[[], bool]] = None  # 条件付きスキップ
+
+class OnboardingWizard(ctk.CTkToplevel):
+    """初回起動ウィザード"""
+
+    STEPS: List[OnboardingStep] = [
+        OnboardingStep(
+            title="ようこそ！",
+            description=(
+                "YouTube Auto Clip Translator へようこそ！\n\n"
+                "このツールは、YouTube動画から自動で見どころを抽出し、\n"
+                "翻訳字幕付きのショート動画を作成します。"
+            ),
+        ),
+        OnboardingStep(
+            title="Gemini APIキーの設定",
+            description=(
+                "AI機能を使用するにはGoogle Gemini APIキーが必要です。\n\n"
+                "1. Google AI Studio にアクセス\n"
+                "2. APIキーを作成\n"
+                "3. 下のボタンから設定"
+            ),
+            action_label="APIキーを設定",
+            skip_if=lambda: bool(get_config().get("gemini_api_key"))
+        ),
+        OnboardingStep(
+            title="FFmpegの確認",
+            description=(
+                "動画処理にはFFmpegが必要です。\n\n"
+                "インストールされていない場合は、\n"
+                "自動でダウンロードされます。"
+            ),
+        ),
+        OnboardingStep(
+            title="準備完了！",
+            description=(
+                "セットアップが完了しました！\n\n"
+                "YouTube URLを入力して、\n"
+                "最初の動画を処理してみましょう。"
+            ),
+        ),
+    ]
+
+    def __init__(self, parent, on_complete: Callable = None):
+        super().__init__(parent)
+
+        self.on_complete = on_complete
+        self.current_step = 0
+        self.filtered_steps = self._filter_steps()
+
+        self.title("セットアップウィザード")
+        self.geometry("600x450")
+        self.transient(parent)
+        self.grab_set()
+
+        # 閉じるボタンを無効化（スキップで対応）
+        self.protocol("WM_DELETE_WINDOW", self._on_skip)
+
+        self._create_ui()
+        self._show_step(0)
+
+    def _filter_steps(self) -> List[OnboardingStep]:
+        """スキップ条件を満たすステップを除外"""
+        return [
+            step for step in self.STEPS
+            if not step.skip_if or not step.skip_if()
+        ]
+
+    def _create_ui(self):
+        """UI作成"""
+        # プログレスバー
+        self.progress_frame = ctk.CTkFrame(self, height=4)
+        self.progress_frame.pack(fill="x", padx=20, pady=(20, 0))
+
+        self.progress_segments: List[ctk.CTkFrame] = []
+        for i in range(len(self.filtered_steps)):
+            segment = ctk.CTkFrame(
+                self.progress_frame,
+                fg_color="gray70",
+                height=4
+            )
+            segment.pack(side="left", fill="x", expand=True, padx=1)
+            self.progress_segments.append(segment)
+
+        # コンテンツエリア
+        self.content_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.content_frame.pack(fill="both", expand=True, padx=40, pady=20)
+
+        # タイトル
+        self.title_label = ctk.CTkLabel(
+            self.content_frame,
+            text="",
+            font=("", 24, "bold")
+        )
+        self.title_label.pack(pady=(20, 10))
+
+        # 説明
+        self.description_label = ctk.CTkLabel(
+            self.content_frame,
+            text="",
+            font=("", 14),
+            justify="center"
+        )
+        self.description_label.pack(pady=10)
+
+        # アクションボタン（オプション）
+        self.action_button = ctk.CTkButton(
+            self.content_frame,
+            text="",
+            command=self._on_action
+        )
+
+        # ナビゲーションボタン
+        nav_frame = ctk.CTkFrame(self, fg_color="transparent")
+        nav_frame.pack(fill="x", padx=40, pady=20)
+
+        self.skip_button = ctk.CTkButton(
+            nav_frame,
+            text="スキップ",
+            fg_color="transparent",
+            text_color="gray",
+            hover_color="gray20",
+            command=self._on_skip
+        )
+        self.skip_button.pack(side="left")
+
+        self.next_button = ctk.CTkButton(
+            nav_frame,
+            text="次へ",
+            command=self._on_next
+        )
+        self.next_button.pack(side="right")
+
+        self.prev_button = ctk.CTkButton(
+            nav_frame,
+            text="戻る",
+            fg_color="gray30",
+            command=self._on_prev
+        )
+        self.prev_button.pack(side="right", padx=10)
+
+    def _show_step(self, index: int):
+        """ステップを表示"""
+        if index < 0 or index >= len(self.filtered_steps):
+            return
+
+        self.current_step = index
+        step = self.filtered_steps[index]
+
+        # プログレス更新
+        for i, segment in enumerate(self.progress_segments):
+            if i <= index:
+                segment.configure(fg_color="#3b82f6")
+            else:
+                segment.configure(fg_color="gray70")
+
+        # コンテンツ更新
+        self.title_label.configure(text=step.title)
+        self.description_label.configure(text=step.description)
+
+        # アクションボタン
+        if step.action and step.action_label:
+            self.action_button.configure(text=step.action_label)
+            self.action_button.pack(pady=20)
+        else:
+            self.action_button.pack_forget()
+
+        # ナビゲーションボタン状態
+        if index == 0:
+            self.prev_button.configure(state="disabled")
+        else:
+            self.prev_button.configure(state="normal")
+
+        if index == len(self.filtered_steps) - 1:
+            self.next_button.configure(text="完了")
+        else:
+            self.next_button.configure(text="次へ")
+
+    def _on_next(self):
+        """次へボタン"""
+        if self.current_step < len(self.filtered_steps) - 1:
+            self._show_step(self.current_step + 1)
+        else:
+            self._complete()
+
+    def _on_prev(self):
+        """戻るボタン"""
+        if self.current_step > 0:
+            self._show_step(self.current_step - 1)
+
+    def _on_action(self):
+        """アクションボタン"""
+        step = self.filtered_steps[self.current_step]
+        if step.action:
+            step.action()
+
+    def _on_skip(self):
+        """スキップ"""
+        self._complete()
+
+    def _complete(self):
+        """ウィザード完了"""
+        # 初回起動フラグを保存
+        save_config({"onboarding_completed": True})
+
+        if self.on_complete:
+            self.on_complete()
+
+        self.destroy()
+
+
+# 初回起動チェック
+def check_first_launch(app: ctk.CTk) -> bool:
+    """初回起動かどうかを確認し、必要ならウィザードを表示"""
+    config = load_config()
+
+    if not config.get("onboarding_completed", False):
+        # 初回起動
+        OnboardingWizard(
+            app,
+            on_complete=lambda: app.navigate_to("home")
+        )
+        return True
+
+    return False
+```
+
+### 13.9 進捗バーの粒度
+
+```python
+from dataclasses import dataclass
+from enum import Enum
+from typing import Optional, Callable, Dict
+import customtkinter as ctk
+
+class ProgressPhase(Enum):
+    """処理フェーズ"""
+    DOWNLOAD = "download"
+    AUDIO_EXTRACT = "audio_extract"
+    TRANSCRIPTION = "transcription"
+    AI_ANALYSIS = "ai_analysis"
+    VIDEO_EDIT = "video_edit"
+    EXPORT = "export"
+
+@dataclass
+class PhaseConfig:
+    """フェーズ設定"""
+    name: str
+    weight: float  # 全体に対する重み（合計1.0）
+    sub_steps: int  # サブステップ数
+
+# フェーズ設定
+PHASE_CONFIGS: Dict[ProgressPhase, PhaseConfig] = {
+    ProgressPhase.DOWNLOAD: PhaseConfig(
+        name="動画ダウンロード",
+        weight=0.15,
+        sub_steps=100  # パーセント単位
+    ),
+    ProgressPhase.AUDIO_EXTRACT: PhaseConfig(
+        name="音声抽出",
+        weight=0.05,
+        sub_steps=1
+    ),
+    ProgressPhase.TRANSCRIPTION: PhaseConfig(
+        name="文字起こし",
+        weight=0.30,
+        sub_steps=100  # チャンク数に応じて
+    ),
+    ProgressPhase.AI_ANALYSIS: PhaseConfig(
+        name="AI分析",
+        weight=0.20,
+        sub_steps=5  # 分析タスク数
+    ),
+    ProgressPhase.VIDEO_EDIT: PhaseConfig(
+        name="動画編集",
+        weight=0.20,
+        sub_steps=100
+    ),
+    ProgressPhase.EXPORT: PhaseConfig(
+        name="書き出し",
+        weight=0.10,
+        sub_steps=100
+    ),
+}
+
+class DetailedProgressTracker:
+    """詳細な進捗追跡"""
+
+    def __init__(self):
+        self.current_phase: Optional[ProgressPhase] = None
+        self.phase_progress: Dict[ProgressPhase, float] = {}
+        self.observers: list = []
+
+    def start_phase(self, phase: ProgressPhase) -> None:
+        """フェーズ開始"""
+        self.current_phase = phase
+        self.phase_progress[phase] = 0.0
+        self._notify()
+
+    def update_phase(self, progress: float) -> None:
+        """フェーズ進捗更新（0.0-1.0）"""
+        if self.current_phase:
+            self.phase_progress[self.current_phase] = min(progress, 1.0)
+            self._notify()
+
+    def complete_phase(self) -> None:
+        """フェーズ完了"""
+        if self.current_phase:
+            self.phase_progress[self.current_phase] = 1.0
+            self._notify()
+
+    def get_total_progress(self) -> float:
+        """全体進捗を計算"""
+        total = 0.0
+        for phase, progress in self.phase_progress.items():
+            config = PHASE_CONFIGS[phase]
+            total += config.weight * progress
+        return total
+
+    def get_current_phase_name(self) -> str:
+        """現在のフェーズ名"""
+        if self.current_phase:
+            return PHASE_CONFIGS[self.current_phase].name
+        return ""
+
+    def subscribe(self, callback: Callable[[float, str], None]) -> None:
+        """進捗更新を購読"""
+        self.observers.append(callback)
+
+    def _notify(self) -> None:
+        """オブザーバーに通知"""
+        total = self.get_total_progress()
+        phase_name = self.get_current_phase_name()
+        for callback in self.observers:
+            callback(total, phase_name)
+
+
+class EnhancedProgressBar(ctk.CTkFrame):
+    """詳細な進捗バーコンポーネント"""
+
+    def __init__(self, parent, tracker: DetailedProgressTracker):
+        super().__init__(parent)
+        self.tracker = tracker
+
+        # メイン進捗バー
+        self.main_progress = ctk.CTkProgressBar(self, width=400)
+        self.main_progress.pack(fill="x", padx=10, pady=(10, 5))
+        self.main_progress.set(0)
+
+        # パーセント表示
+        self.percent_label = ctk.CTkLabel(
+            self,
+            text="0%",
+            font=("", 16, "bold")
+        )
+        self.percent_label.pack()
+
+        # 現在のフェーズ表示
+        self.phase_label = ctk.CTkLabel(
+            self,
+            text="準備中...",
+            font=("", 12),
+            text_color="gray"
+        )
+        self.phase_label.pack()
+
+        # フェーズ別進捗（小さいインジケーター）
+        self.phase_indicators = ctk.CTkFrame(self, fg_color="transparent")
+        self.phase_indicators.pack(fill="x", padx=10, pady=10)
+
+        self._create_phase_indicators()
+
+        # トラッカーを購読
+        self.tracker.subscribe(self._on_progress_update)
+
+    def _create_phase_indicators(self):
+        """フェーズインジケーターを作成"""
+        self.indicators: Dict[ProgressPhase, ctk.CTkFrame] = {}
+
+        for phase in ProgressPhase:
+            config = PHASE_CONFIGS[phase]
+
+            frame = ctk.CTkFrame(
+                self.phase_indicators,
+                fg_color="transparent"
+            )
+            frame.pack(side="left", expand=True, padx=2)
+
+            # 小さい進捗バー
+            progress = ctk.CTkProgressBar(frame, width=50, height=4)
+            progress.pack()
+            progress.set(0)
+
+            # フェーズ名
+            label = ctk.CTkLabel(
+                frame,
+                text=config.name[:4],  # 短縮表示
+                font=("", 9),
+                text_color="gray"
+            )
+            label.pack()
+
+            self.indicators[phase] = {
+                "frame": frame,
+                "progress": progress,
+                "label": label
+            }
+
+    def _on_progress_update(self, total: float, phase_name: str) -> None:
+        """進捗更新"""
+        # メイン進捗バー
+        self.main_progress.set(total)
+        self.percent_label.configure(text=f"{int(total * 100)}%")
+        self.phase_label.configure(text=phase_name or "処理中...")
+
+        # フェーズ別インジケーター
+        for phase, progress in self.tracker.phase_progress.items():
+            indicator = self.indicators[phase]
+            indicator["progress"].set(progress)
+
+            # アクティブなフェーズをハイライト
+            if phase == self.tracker.current_phase:
+                indicator["label"].configure(text_color="#3b82f6")
+            elif progress >= 1.0:
+                indicator["label"].configure(text_color="#22c55e")
+            else:
+                indicator["label"].configure(text_color="gray")
+
+
+# 使用例
+class ProcessingView(ctk.CTkFrame):
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        self.progress_tracker = DetailedProgressTracker()
+        self.progress_bar = EnhancedProgressBar(self, self.progress_tracker)
+        self.progress_bar.pack(pady=20)
+
+    async def process_video(self, url: str):
+        """動画処理（進捗付き）"""
+        # ダウンロードフェーズ
+        self.progress_tracker.start_phase(ProgressPhase.DOWNLOAD)
+        async for progress in download_video(url):
+            self.progress_tracker.update_phase(progress)
+        self.progress_tracker.complete_phase()
+
+        # 音声抽出フェーズ
+        self.progress_tracker.start_phase(ProgressPhase.AUDIO_EXTRACT)
+        await extract_audio()
+        self.progress_tracker.complete_phase()
+
+        # 文字起こしフェーズ
+        self.progress_tracker.start_phase(ProgressPhase.TRANSCRIPTION)
+        async for progress in transcribe_audio():
+            self.progress_tracker.update_phase(progress)
+        self.progress_tracker.complete_phase()
+
+        # ... 以降のフェーズも同様
+```
+
+### 13.10 多言語UI
+
+```python
+from dataclasses import dataclass
+from enum import Enum
+from typing import Dict, Optional
+import json
+from pathlib import Path
+
+class Language(Enum):
+    """サポート言語"""
+    JA = "ja"  # 日本語
+    EN = "en"  # English
+
+# デフォルト翻訳（日本語）
+DEFAULT_TRANSLATIONS: Dict[str, str] = {
+    # 共通
+    "app.name": "YouTube Auto Clip Translator",
+    "common.save": "保存",
+    "common.cancel": "キャンセル",
+    "common.close": "閉じる",
+    "common.next": "次へ",
+    "common.back": "戻る",
+    "common.delete": "削除",
+    "common.edit": "編集",
+    "common.ok": "OK",
+    "common.yes": "はい",
+    "common.no": "いいえ",
+    "common.retry": "リトライ",
+    "common.loading": "読み込み中...",
+    "common.processing": "処理中...",
+
+    # ホーム画面
+    "home.title": "ホーム",
+    "home.url_placeholder": "YouTube URL を入力してください",
+    "home.start_button": "処理を開始",
+    "home.recent_projects": "最近のプロジェクト",
+    "home.no_recent": "最近のプロジェクトはありません",
+
+    # 処理画面
+    "processing.title": "処理中...",
+    "processing.downloading": "動画をダウンロード中...",
+    "processing.extracting": "音声を抽出中...",
+    "processing.transcribing": "文字起こし中...",
+    "processing.analyzing": "AI分析中...",
+    "processing.cancel_confirm": "処理をキャンセルしますか？",
+
+    # エディター画面
+    "editor.title": "エディター",
+    "editor.segments": "セグメント一覧",
+    "editor.subtitles": "字幕一覧",
+    "editor.add_segment": "セグメント追加",
+    "editor.preview": "プレビュー",
+    "editor.export": "書き出し",
+    "editor.original": "原文",
+    "editor.translated": "訳文",
+    "editor.start_time": "開始",
+    "editor.end_time": "終了",
+
+    # 設定画面
+    "settings.title": "設定",
+    "settings.general": "一般設定",
+    "settings.theme": "テーマ",
+    "settings.theme.dark": "ダーク",
+    "settings.theme.light": "ライト",
+    "settings.language": "言語",
+    "settings.api": "API設定",
+    "settings.api_key": "APIキー",
+    "settings.api_valid": "有効",
+    "settings.api_invalid": "無効",
+    "settings.processing": "処理設定",
+    "settings.model": "WhisperXモデル",
+    "settings.device": "デバイス",
+    "settings.subtitle": "字幕設定",
+    "settings.font": "フォント",
+    "settings.font_size": "フォントサイズ",
+
+    # エラーメッセージ
+    "error.network": "ネットワークエラーが発生しました",
+    "error.api_key": "APIキーが無効です",
+    "error.download_failed": "ダウンロードに失敗しました",
+    "error.processing_failed": "処理に失敗しました",
+
+    # 確認ダイアログ
+    "dialog.unsaved_changes": "保存していない変更があります",
+    "dialog.discard_changes": "変更を破棄しますか？",
+    "dialog.close_while_processing": "処理中です。終了しますか？",
+}
+
+# 英語翻訳
+EN_TRANSLATIONS: Dict[str, str] = {
+    "app.name": "YouTube Auto Clip Translator",
+    "common.save": "Save",
+    "common.cancel": "Cancel",
+    "common.close": "Close",
+    "common.next": "Next",
+    "common.back": "Back",
+    "common.delete": "Delete",
+    "common.edit": "Edit",
+    "common.ok": "OK",
+    "common.yes": "Yes",
+    "common.no": "No",
+    "common.retry": "Retry",
+    "common.loading": "Loading...",
+    "common.processing": "Processing...",
+
+    "home.title": "Home",
+    "home.url_placeholder": "Enter YouTube URL",
+    "home.start_button": "Start Processing",
+    "home.recent_projects": "Recent Projects",
+    "home.no_recent": "No recent projects",
+
+    "processing.title": "Processing...",
+    "processing.downloading": "Downloading video...",
+    "processing.extracting": "Extracting audio...",
+    "processing.transcribing": "Transcribing...",
+    "processing.analyzing": "AI analysis...",
+    "processing.cancel_confirm": "Cancel processing?",
+
+    "editor.title": "Editor",
+    "editor.segments": "Segments",
+    "editor.subtitles": "Subtitles",
+    "editor.add_segment": "Add Segment",
+    "editor.preview": "Preview",
+    "editor.export": "Export",
+    "editor.original": "Original",
+    "editor.translated": "Translated",
+    "editor.start_time": "Start",
+    "editor.end_time": "End",
+
+    "settings.title": "Settings",
+    "settings.general": "General",
+    "settings.theme": "Theme",
+    "settings.theme.dark": "Dark",
+    "settings.theme.light": "Light",
+    "settings.language": "Language",
+    "settings.api": "API Settings",
+    "settings.api_key": "API Key",
+    "settings.api_valid": "Valid",
+    "settings.api_invalid": "Invalid",
+    "settings.processing": "Processing",
+    "settings.model": "WhisperX Model",
+    "settings.device": "Device",
+    "settings.subtitle": "Subtitle",
+    "settings.font": "Font",
+    "settings.font_size": "Font Size",
+
+    "error.network": "Network error occurred",
+    "error.api_key": "Invalid API key",
+    "error.download_failed": "Download failed",
+    "error.processing_failed": "Processing failed",
+
+    "dialog.unsaved_changes": "You have unsaved changes",
+    "dialog.discard_changes": "Discard changes?",
+    "dialog.close_while_processing": "Processing in progress. Exit?",
+}
+
+# 翻訳辞書
+TRANSLATIONS: Dict[Language, Dict[str, str]] = {
+    Language.JA: DEFAULT_TRANSLATIONS,
+    Language.EN: EN_TRANSLATIONS,
+}
+
+
+class I18nManager:
+    """多言語対応管理"""
+
+    _instance: Optional['I18nManager'] = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+
+        self._current_language = Language.JA
+        self._custom_translations: Dict[str, str] = {}
+        self._observers: list = []
+        self._initialized = True
+
+    @property
+    def current_language(self) -> Language:
+        return self._current_language
+
+    def set_language(self, language: Language) -> None:
+        """言語を変更"""
+        if language != self._current_language:
+            self._current_language = language
+            self._notify_observers()
+
+    def t(self, key: str, **kwargs) -> str:
+        """翻訳を取得"""
+        # カスタム翻訳を優先
+        if key in self._custom_translations:
+            text = self._custom_translations[key]
+        else:
+            translations = TRANSLATIONS.get(
+                self._current_language,
+                DEFAULT_TRANSLATIONS
+            )
+            text = translations.get(key, key)
+
+        # プレースホルダー置換
+        for k, v in kwargs.items():
+            text = text.replace(f"{{{k}}}", str(v))
+
+        return text
+
+    def load_custom_translations(self, path: Path) -> None:
+        """カスタム翻訳ファイルを読み込み"""
+        if path.exists():
+            with open(path, 'r', encoding='utf-8') as f:
+                self._custom_translations = json.load(f)
+
+    def subscribe(self, callback: callable) -> None:
+        """言語変更通知を購読"""
+        self._observers.append(callback)
+
+    def unsubscribe(self, callback: callable) -> None:
+        """購読解除"""
+        if callback in self._observers:
+            self._observers.remove(callback)
+
+    def _notify_observers(self) -> None:
+        """オブザーバーに通知"""
+        for callback in self._observers:
+            callback(self._current_language)
+
+
+# グローバル関数
+def t(key: str, **kwargs) -> str:
+    """翻訳のショートカット"""
+    return I18nManager().t(key, **kwargs)
+
+def set_language(language: Language) -> None:
+    """言語設定のショートカット"""
+    I18nManager().set_language(language)
+
+
+# 使用例
+class LocalizedWidget(ctk.CTkFrame):
+    """ローカライズ対応ウィジェット"""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        self.i18n = I18nManager()
+        self.i18n.subscribe(self._on_language_change)
+
+        self._create_widgets()
+
+    def _create_widgets(self):
+        """ウィジェット作成"""
+        self.title_label = ctk.CTkLabel(
+            self,
+            text=t("home.title")
+        )
+        self.title_label.pack()
+
+        self.start_button = ctk.CTkButton(
+            self,
+            text=t("home.start_button")
+        )
+        self.start_button.pack()
+
+    def _on_language_change(self, language: Language):
+        """言語変更時の更新"""
+        self.title_label.configure(text=t("home.title"))
+        self.start_button.configure(text=t("home.start_button"))
+
+    def destroy(self):
+        """クリーンアップ"""
+        self.i18n.unsubscribe(self._on_language_change)
+        super().destroy()
+```
+
+---
+
+## 14. 更新履歴
+
+| 日付 | 内容 |
+|------|------|
+| 2024-01-15 | 初版作成 |
+| 2024-01-20 | 追加仕様セクション追加（ウィンドウ制約、DPI対応、マルチモニタ、Undo/Redo、D&D、フォーカス、エラーUI、オンボーディング、進捗バー、多言語UI） |

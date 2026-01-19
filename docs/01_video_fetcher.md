@@ -322,9 +322,203 @@ print(f"Is Shorts: {result.is_shorts}")
 
 ---
 
-## 12. 制限事項・注意点
+## 12. 追加仕様
+
+### 12.1 プレイリスト対応
+
+**MVPでは非対応**。単一動画のみ処理可能。
+
+```python
+# プレイリストURL検出
+def is_playlist_url(url: str) -> bool:
+    """プレイリストURLかどうかを判定"""
+    return "list=" in url or "/playlist" in url
+
+# プレイリストURLが入力された場合の対処
+if is_playlist_url(url):
+    raise PlaylistNotSupportedError(
+        "プレイリストは現在対応していません。個別の動画URLを入力してください。"
+    )
+```
+
+### 12.2 ライブ配信アーカイブ
+
+| 状態 | 対応 | 説明 |
+|------|------|------|
+| ライブ配信中 | ❌ | エラー表示「ライブ配信は処理できません」 |
+| アーカイブ処理中 | ❌ | エラー表示「アーカイブ処理中です。しばらくお待ちください」 |
+| アーカイブ完了 | ✅ | 通常の動画として処理可能 |
+
+```python
+def check_video_status(metadata: dict) -> str:
+    """動画のステータスを確認"""
+    if metadata.get("is_live"):
+        raise LiveStreamError("ライブ配信中の動画は処理できません")
+    if metadata.get("live_status") == "post_live":
+        # アーカイブ処理中の可能性
+        if not metadata.get("duration"):
+            raise ArchiveProcessingError("アーカイブ処理中です")
+    return "available"
+```
+
+### 12.3 Cookie設定（年齢制限動画）
+
+年齢制限動画をダウンロードするためのCookie設定手順：
+
+#### ブラウザからCookieをエクスポート
+
+1. **Chrome拡張機能を使用**
+   - 「Get cookies.txt LOCALLY」等の拡張機能をインストール
+   - YouTubeにログインした状態でCookieをエクスポート
+   - `cookies.txt` として保存
+
+2. **保存場所**
+   ```
+   ~/.youtube-auto-clip-translator/cookies.txt
+   ```
+
+3. **設定ファイルで指定**
+   ```yaml
+   fetcher:
+     cookies_file: "~/.youtube-auto-clip-translator/cookies.txt"
+   ```
+
+#### Cookie自動検出
+
+```python
+def find_cookies_file() -> Optional[Path]:
+    """Cookieファイルを自動検出"""
+    candidates = [
+        Path.home() / ".youtube-auto-clip-translator" / "cookies.txt",
+        Path.home() / "cookies.txt",
+        Path.cwd() / "cookies.txt",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+```
+
+### 12.4 プロキシ設定
+
+```python
+@dataclass
+class ProxyConfig:
+    # プロキシURL（例: "http://127.0.0.1:8080"）
+    url: str = ""
+
+    # 認証情報（必要な場合）
+    username: str = ""
+    password: str = ""
+
+    # プロキシタイプ
+    type: str = "http"  # http, https, socks5
+
+def build_proxy_url(config: ProxyConfig) -> str:
+    """プロキシURLを構築"""
+    if not config.url:
+        return ""
+
+    if config.username and config.password:
+        # 認証付きプロキシ
+        parsed = urlparse(config.url)
+        return f"{parsed.scheme}://{config.username}:{config.password}@{parsed.netloc}"
+
+    return config.url
+```
+
+### 12.5 ダウンロード中断・再開
+
+```python
+@dataclass
+class DownloadState:
+    url: str
+    output_path: Path
+    downloaded_bytes: int
+    total_bytes: int
+    temp_file: Path
+    timestamp: datetime
+
+class ResumableDownloader:
+    """中断可能なダウンローダー"""
+
+    def __init__(self, state_path: Path):
+        self.state_path = state_path
+
+    def save_state(self, state: DownloadState) -> None:
+        """ダウンロード状態を保存"""
+        with open(self.state_path, "w") as f:
+            json.dump(asdict(state), f)
+
+    def load_state(self) -> Optional[DownloadState]:
+        """中断したダウンロードの状態を復元"""
+        if not self.state_path.exists():
+            return None
+        with open(self.state_path) as f:
+            data = json.load(f)
+            return DownloadState(**data)
+
+    def can_resume(self, state: DownloadState) -> bool:
+        """再開可能かチェック"""
+        # 一時ファイルが存在し、24時間以内の場合は再開可能
+        if not state.temp_file.exists():
+            return False
+        age = datetime.now() - state.timestamp
+        return age.total_seconds() < 86400  # 24時間
+```
+
+### 12.6 既存字幕のダウンロード
+
+YouTubeに既存の字幕がある場合、それをダウンロードして活用可能：
+
+```python
+@dataclass
+class SubtitleInfo:
+    language: str
+    language_name: str
+    is_auto_generated: bool
+    url: str
+
+async def get_available_subtitles(url: str) -> List[SubtitleInfo]:
+    """利用可能な字幕一覧を取得"""
+    # yt-dlp --list-subs を使用
+    ...
+
+async def download_subtitle(
+    url: str,
+    language: str,
+    output_path: Path,
+    prefer_manual: bool = True  # 手動作成字幕を優先
+) -> Path:
+    """字幕をダウンロード"""
+    # yt-dlp --write-sub --sub-lang {language} を使用
+    ...
+```
+
+**字幕活用フロー**:
+```
+1. 字幕一覧を取得
+2. 手動作成字幕があれば優先使用（文字起こしスキップ可能）
+3. 自動生成字幕のみの場合は参考として使用
+4. 字幕がない場合は WhisperX で文字起こし
+```
+
+---
+
+## 13. 制限事項・注意点
 
 1. **著作権**: ダウンロードは個人利用目的に限定。再配布は利用者の責任。
 2. **利用規約**: YouTube利用規約に準拠した使用を推奨。
 3. **レート制限**: 短時間に大量リクエストを避ける。
 4. **Deno依存**: yt-dlpの次期バージョンからDenoが必須。
+5. **プレイリスト**: MVP では非対応（将来対応予定）
+6. **ライブ配信**: アーカイブ完了後のみ対応
+
+---
+
+## 更新履歴
+
+| 日付 | 内容 |
+|------|------|
+| 2026-01-19 | 初版作成 |
+| 2026-01-19 | 追加仕様（プレイリスト、Cookie、プロキシ等）を追記 |

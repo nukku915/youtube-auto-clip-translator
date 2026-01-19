@@ -13,8 +13,11 @@ dependencies = [
     "torch>=2.0.0",
     "torchaudio>=2.0.0",
 
-    # AI (Gemini)
+    # AI - Gemini (クラウド)
     "google-generativeai>=0.8.0",
+
+    # AI - Ollama (ローカル)
+    "ollama>=0.4.0",
 
     # 字幕処理
     "pysubs2>=1.8.0",
@@ -32,6 +35,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mlx = [
+    # MLX LM (macOS Apple Silicon only)
+    "mlx-lm>=0.21.0",
+]
 dev = [
     "ruff>=0.8.0",
     "mypy>=1.13.0",
@@ -39,6 +46,11 @@ dev = [
 
 [project.scripts]
 yact = "src.main:main"
+yact-gui = "src.gui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
 
 [tool.ruff]
 line-length = 100

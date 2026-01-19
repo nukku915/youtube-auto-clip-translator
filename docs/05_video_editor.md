@@ -659,3 +659,548 @@ shorts_result = await editor.convert_to_shorts(
 - [ ] 各種コーデック対応
 - [ ] ハードウェアエンコーダー
 - [ ] エラーリカバリ
+
+---
+
+## 15. 追加仕様
+
+### 15.1 複数音声トラック
+
+多言語音声トラックを持つ動画の扱い：
+
+```python
+@dataclass
+class AudioTrackInfo:
+    index: int
+    language: str
+    codec: str
+    channels: int
+    sample_rate: int
+    is_default: bool
+
+def get_audio_tracks(video_path: Path) -> List[AudioTrackInfo]:
+    """動画の音声トラック一覧を取得"""
+    result = subprocess.run([
+        "ffprobe", "-v", "quiet",
+        "-print_format", "json",
+        "-show_streams",
+        "-select_streams", "a",
+        str(video_path)
+    ], capture_output=True, text=True)
+
+    data = json.loads(result.stdout)
+    tracks = []
+    for stream in data.get("streams", []):
+        tracks.append(AudioTrackInfo(
+            index=stream["index"],
+            language=stream.get("tags", {}).get("language", "und"),
+            codec=stream["codec_name"],
+            channels=stream["channels"],
+            sample_rate=int(stream["sample_rate"]),
+            is_default=stream.get("disposition", {}).get("default", 0) == 1
+        ))
+    return tracks
+
+def select_audio_track(
+    video_path: Path,
+    preferred_language: str = None
+) -> int:
+    """使用する音声トラックを選択"""
+    tracks = get_audio_tracks(video_path)
+
+    if not tracks:
+        raise NoAudioTrackError("音声トラックがありません")
+
+    if preferred_language:
+        for track in tracks:
+            if track.language == preferred_language:
+                return track.index
+
+    # デフォルトトラックを返す
+    for track in tracks:
+        if track.is_default:
+            return track.index
+
+    return tracks[0].index
+
+# FFmpegでの音声トラック選択
+"""
+ffmpeg -i input.mp4 -map 0:v:0 -map 0:a:{track_index} output.mp4
+"""
+```
+
+### 15.2 キーフレーム問題
+
+正確な切り出しのためのキーフレーム考慮：
+
+```python
+@dataclass
+class KeyframeInfo:
+    time: float
+    pts: int
+
+def get_keyframes(video_path: Path, start: float, end: float) -> List[KeyframeInfo]:
+    """指定範囲のキーフレームを取得"""
+    result = subprocess.run([
+        "ffprobe", "-v", "quiet",
+        "-select_streams", "v:0",
+        "-show_entries", "packet=pts_time,flags",
+        "-of", "csv=p=0",
+        "-read_intervals", f"{start}%{end}",
+        str(video_path)
+    ], capture_output=True, text=True)
+
+    keyframes = []
+    for line in result.stdout.strip().split("\n"):
+        parts = line.split(",")
+        if len(parts) >= 2 and "K" in parts[1]:  # K = keyframe
+            keyframes.append(KeyframeInfo(
+                time=float(parts[0]),
+                pts=int(parts[0])
+            ))
+    return keyframes
+
+def find_nearest_keyframe(
+    keyframes: List[KeyframeInfo],
+    target_time: float,
+    prefer: str = "before"  # "before" or "after"
+) -> float:
+    """目標時間に最も近いキーフレームを見つける"""
+    if not keyframes:
+        return target_time
+
+    if prefer == "before":
+        candidates = [kf for kf in keyframes if kf.time <= target_time]
+        return max(candidates, key=lambda kf: kf.time).time if candidates else keyframes[0].time
+    else:
+        candidates = [kf for kf in keyframes if kf.time >= target_time]
+        return min(candidates, key=lambda kf: kf.time).time if candidates else keyframes[-1].time
+
+def determine_cut_strategy(
+    video_path: Path,
+    start: float,
+    end: float,
+    precision: str = "frame"  # "keyframe" or "frame"
+) -> dict:
+    """
+    切り出し戦略を決定
+
+    Returns:
+        {
+            "use_copy": bool,       # 無劣化コピー可能か
+            "adjusted_start": float, # 調整後の開始時間
+            "adjusted_end": float,   # 調整後の終了時間
+            "requires_reencode": bool
+        }
+    """
+    keyframes = get_keyframes(video_path, start - 10, end + 10)
+
+    if precision == "keyframe":
+        # キーフレーム単位（高速、無劣化）
+        adjusted_start = find_nearest_keyframe(keyframes, start, "before")
+        adjusted_end = find_nearest_keyframe(keyframes, end, "after")
+        return {
+            "use_copy": True,
+            "adjusted_start": adjusted_start,
+            "adjusted_end": adjusted_end,
+            "requires_reencode": False
+        }
+    else:
+        # フレーム単位（正確、再エンコード必要）
+        return {
+            "use_copy": False,
+            "adjusted_start": start,
+            "adjusted_end": end,
+            "requires_reencode": True
+        }
+```
+
+### 15.3 フレーム単位精度
+
+```python
+@dataclass
+class FramePrecisionConfig:
+    # 精度モード
+    mode: str = "frame"  # "keyframe", "frame", "millisecond"
+
+    # フレームレート（自動検出も可能）
+    fps: Optional[float] = None
+
+def time_to_frame(time: float, fps: float) -> int:
+    """時間をフレーム番号に変換"""
+    return int(time * fps)
+
+def frame_to_time(frame: int, fps: float) -> float:
+    """フレーム番号を時間に変換"""
+    return frame / fps
+
+def snap_to_frame(time: float, fps: float) -> float:
+    """時間を最も近いフレーム境界にスナップ"""
+    frame = round(time * fps)
+    return frame / fps
+
+def create_precise_cut_command(
+    video_path: Path,
+    start: float,
+    end: float,
+    output_path: Path,
+    config: FramePrecisionConfig
+) -> List[str]:
+    """精密な切り出しコマンドを生成"""
+    # フレームレート取得
+    if config.fps is None:
+        config.fps = get_video_fps(video_path)
+
+    if config.mode == "keyframe":
+        # 無劣化切り出し（キーフレーム境界）
+        return [
+            "ffmpeg", "-i", str(video_path),
+            "-ss", str(start),
+            "-to", str(end),
+            "-c", "copy",
+            str(output_path)
+        ]
+    else:
+        # 再エンコード（フレーム精度）
+        snapped_start = snap_to_frame(start, config.fps)
+        snapped_end = snap_to_frame(end, config.fps)
+
+        return [
+            "ffmpeg", "-i", str(video_path),
+            "-ss", str(snapped_start),
+            "-to", str(snapped_end),
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            str(output_path)
+        ]
+```
+
+### 15.4 一時ファイルクリーンアップ
+
+```python
+@dataclass
+class TempFileConfig:
+    # 一時ファイルの保存先
+    temp_dir: Path = Path.home() / ".youtube-auto-clip-translator" / "temp"
+
+    # 自動削除設定
+    cleanup_on_success: bool = True
+    cleanup_on_error: bool = False
+    retention_hours: int = 24
+
+class TempFileManager:
+    """一時ファイルの管理"""
+
+    def __init__(self, config: TempFileConfig = None):
+        self.config = config or TempFileConfig()
+        self.config.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.created_files: List[Path] = []
+
+    def create_temp_file(self, suffix: str = ".mp4") -> Path:
+        """一時ファイルを作成"""
+        temp_file = self.config.temp_dir / f"temp_{uuid.uuid4().hex}{suffix}"
+        self.created_files.append(temp_file)
+        return temp_file
+
+    def cleanup(self, force: bool = False) -> int:
+        """一時ファイルを削除"""
+        deleted = 0
+        for file in self.created_files:
+            try:
+                if file.exists():
+                    file.unlink()
+                    deleted += 1
+            except Exception as e:
+                logger.warning(f"Failed to delete temp file {file}: {e}")
+        self.created_files.clear()
+        return deleted
+
+    def cleanup_old_files(self) -> int:
+        """古い一時ファイルを削除"""
+        threshold = datetime.now() - timedelta(hours=self.config.retention_hours)
+        deleted = 0
+
+        for file in self.config.temp_dir.glob("temp_*"):
+            try:
+                mtime = datetime.fromtimestamp(file.stat().st_mtime)
+                if mtime < threshold:
+                    file.unlink()
+                    deleted += 1
+            except Exception as e:
+                logger.warning(f"Failed to delete old temp file {file}: {e}")
+
+        return deleted
+
+    def get_total_size(self) -> int:
+        """一時ファイルの合計サイズ"""
+        return sum(f.stat().st_size for f in self.config.temp_dir.glob("*") if f.is_file())
+
+# コンテキストマネージャーとして使用
+class VideoEditSession:
+    """動画編集セッション（自動クリーンアップ付き）"""
+
+    def __init__(self):
+        self.temp_manager = TempFileManager()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            # 正常終了
+            if self.temp_manager.config.cleanup_on_success:
+                self.temp_manager.cleanup()
+        else:
+            # エラー発生
+            if self.temp_manager.config.cleanup_on_error:
+                self.temp_manager.cleanup()
+
+# 使用例
+with VideoEditSession() as session:
+    temp_file = session.temp_manager.create_temp_file()
+    # 処理...
+# セッション終了時に自動クリーンアップ
+```
+
+### 15.5 プログレス計算方法
+
+```python
+@dataclass
+class ProgressWeight:
+    """各処理ステップの重み付け"""
+    segment_cut: float = 0.2      # セグメント切り出し
+    title_card: float = 0.1       # タイトルカード生成
+    concat: float = 0.1           # 結合
+    subtitle_burn: float = 0.2    # 字幕焼き付け
+    encode: float = 0.4           # 最終エンコード
+
+class ProgressTracker:
+    """進捗追跡"""
+
+    def __init__(self, weights: ProgressWeight = None):
+        self.weights = weights or ProgressWeight()
+        self.current_step: str = ""
+        self.step_progress: float = 0.0
+        self.completed_steps: Dict[str, float] = {}
+
+    def get_total_progress(self) -> float:
+        """全体進捗率を計算（0-100）"""
+        total = 0.0
+
+        # 完了したステップ
+        for step, _ in self.completed_steps.items():
+            total += getattr(self.weights, step, 0) * 100
+
+        # 現在のステップ
+        if self.current_step:
+            step_weight = getattr(self.weights, self.current_step, 0)
+            total += step_weight * self.step_progress
+
+        return min(total, 100.0)
+
+    def start_step(self, step_name: str) -> None:
+        """ステップを開始"""
+        self.current_step = step_name
+        self.step_progress = 0.0
+
+    def update_step_progress(self, progress: float) -> None:
+        """ステップ内の進捗を更新（0-100）"""
+        self.step_progress = progress
+
+    def complete_step(self) -> None:
+        """ステップを完了"""
+        if self.current_step:
+            self.completed_steps[self.current_step] = 100.0
+            self.current_step = ""
+            self.step_progress = 0.0
+
+# FFmpegの進捗をパース
+def parse_ffmpeg_progress(line: str, total_duration: float) -> Optional[float]:
+    """FFmpeg出力から進捗を抽出"""
+    # "time=00:01:30.50" のようなパターンを探す
+    match = re.search(r'time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})', line)
+    if match:
+        hours, minutes, seconds, centiseconds = map(int, match.groups())
+        current_time = hours * 3600 + minutes * 60 + seconds + centiseconds / 100
+        return (current_time / total_duration) * 100
+    return None
+```
+
+### 15.6 FFmpegエラー解析
+
+```python
+@dataclass
+class FFmpegError:
+    exit_code: int
+    error_type: str
+    message: str
+    user_friendly_message: str
+    is_retryable: bool
+
+# エラーパターン
+FFMPEG_ERROR_PATTERNS = {
+    r"No such file or directory": FFmpegError(
+        exit_code=1,
+        error_type="file_not_found",
+        message="Input file not found",
+        user_friendly_message="入力ファイルが見つかりません",
+        is_retryable=False
+    ),
+    r"Permission denied": FFmpegError(
+        exit_code=1,
+        error_type="permission_denied",
+        message="Permission denied",
+        user_friendly_message="ファイルへのアクセス権限がありません",
+        is_retryable=False
+    ),
+    r"No space left on device": FFmpegError(
+        exit_code=1,
+        error_type="disk_full",
+        message="Disk full",
+        user_friendly_message="ディスク容量が不足しています",
+        is_retryable=False
+    ),
+    r"Invalid data found": FFmpegError(
+        exit_code=1,
+        error_type="invalid_input",
+        message="Invalid input data",
+        user_friendly_message="入力ファイルが破損しているか、対応していない形式です",
+        is_retryable=False
+    ),
+    r"Connection (refused|timed out)": FFmpegError(
+        exit_code=1,
+        error_type="network_error",
+        message="Network error",
+        user_friendly_message="ネットワーク接続に問題があります",
+        is_retryable=True
+    ),
+    r"(CUDA|NVENC|encoder).*(failed|error)": FFmpegError(
+        exit_code=1,
+        error_type="hw_encoder_error",
+        message="Hardware encoder failed",
+        user_friendly_message="ハードウェアエンコーダーでエラーが発生しました。ソフトウェアエンコードに切り替えます",
+        is_retryable=True
+    ),
+}
+
+def analyze_ffmpeg_error(stderr: str, exit_code: int) -> FFmpegError:
+    """FFmpegエラー出力を解析"""
+    for pattern, error in FFMPEG_ERROR_PATTERNS.items():
+        if re.search(pattern, stderr, re.IGNORECASE):
+            return FFmpegError(
+                exit_code=exit_code,
+                error_type=error.error_type,
+                message=error.message,
+                user_friendly_message=error.user_friendly_message,
+                is_retryable=error.is_retryable
+            )
+
+    # 未知のエラー
+    return FFmpegError(
+        exit_code=exit_code,
+        error_type="unknown",
+        message=stderr[:500],  # 最初の500文字
+        user_friendly_message="動画処理中に予期しないエラーが発生しました",
+        is_retryable=False
+    )
+```
+
+### 15.7 音声・映像の同期ズレ対策
+
+```python
+@dataclass
+class SyncConfig:
+    # 許容される同期ズレ（秒）
+    max_drift: float = 0.05  # 50ms
+
+    # 同期方法
+    sync_method: str = "audio"  # "audio" or "video"
+
+def check_av_sync(video_path: Path) -> float:
+    """音声と映像の同期ズレを検出（秒）"""
+    result = subprocess.run([
+        "ffprobe", "-v", "quiet",
+        "-show_entries", "stream=start_time",
+        "-of", "json",
+        str(video_path)
+    ], capture_output=True, text=True)
+
+    data = json.loads(result.stdout)
+    streams = data.get("streams", [])
+
+    video_start = None
+    audio_start = None
+
+    for stream in streams:
+        start_time = float(stream.get("start_time", 0))
+        if stream.get("codec_type") == "video":
+            video_start = start_time
+        elif stream.get("codec_type") == "audio":
+            audio_start = start_time
+
+    if video_start is not None and audio_start is not None:
+        return audio_start - video_start
+
+    return 0.0
+
+def fix_av_sync(
+    video_path: Path,
+    output_path: Path,
+    drift: float
+) -> None:
+    """音声と映像の同期を修正"""
+    if abs(drift) < 0.001:
+        # ズレなし
+        shutil.copy(video_path, output_path)
+        return
+
+    if drift > 0:
+        # 音声が遅れている → 音声を早める
+        filter_str = f"adelay=0|0,aresample=async=1:first_pts=0"
+    else:
+        # 映像が遅れている → 映像を早める
+        filter_str = f"setpts=PTS-{abs(drift)}/TB"
+
+    subprocess.run([
+        "ffmpeg", "-i", str(video_path),
+        "-af" if drift > 0 else "-vf", filter_str,
+        "-c:v", "copy" if drift > 0 else "libx264",
+        "-c:a", "libx264" if drift > 0 else "copy",
+        str(output_path)
+    ], check=True)
+
+def concat_with_sync_correction(
+    video_paths: List[Path],
+    output_path: Path
+) -> None:
+    """同期ズレを補正しながら動画を結合"""
+    # 各動画の同期をチェック
+    corrected_paths = []
+
+    for i, path in enumerate(video_paths):
+        drift = check_av_sync(path)
+        if abs(drift) > 0.05:  # 50ms以上のズレ
+            logger.warning(f"A/V sync drift detected in {path}: {drift*1000:.1f}ms")
+            corrected_path = path.with_suffix(f".sync{path.suffix}")
+            fix_av_sync(path, corrected_path, drift)
+            corrected_paths.append(corrected_path)
+        else:
+            corrected_paths.append(path)
+
+    # 結合
+    concat_videos(corrected_paths, output_path)
+
+    # 一時ファイル削除
+    for path in corrected_paths:
+        if path not in video_paths and path.exists():
+            path.unlink()
+```
+
+---
+
+## 更新履歴
+
+| 日付 | 内容 |
+|------|------|
+| 2026-01-19 | 初版作成 |
+| 2026-01-19 | 追加仕様（キーフレーム、同期ズレ、プログレス等）を追記 |

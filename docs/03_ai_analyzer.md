@@ -817,3 +817,518 @@ translation = await analyzer.translate(
 - [ ] エラーリカバリ
 - [ ] レート制限対応
 - [ ] キャッシュ動作
+
+---
+
+## 14. 追加仕様
+
+### 14.1 プロンプトバージョン管理
+
+プロンプト変更時の互換性を確保：
+
+```python
+@dataclass
+class PromptVersion:
+    version: str           # "1.0.0"
+    created_at: datetime
+    description: str
+    template: str
+    expected_output_schema: dict
+
+# プロンプトレジストリ
+PROMPT_REGISTRY = {
+    "translation": {
+        "1.0.0": PromptVersion(
+            version="1.0.0",
+            created_at=datetime(2026, 1, 19),
+            description="初版翻訳プロンプト",
+            template=TRANSLATION_SYSTEM_PROMPT_V1,
+            expected_output_schema={
+                "type": "object",
+                "properties": {
+                    "translations": {"type": "array"}
+                }
+            }
+        ),
+        "1.1.0": PromptVersion(
+            version="1.1.0",
+            created_at=datetime(2026, 1, 20),
+            description="文脈考慮を追加",
+            template=TRANSLATION_SYSTEM_PROMPT_V1_1,
+            expected_output_schema={...}
+        ),
+    },
+    "highlight_detection": {...},
+    "chapter_detection": {...},
+    "title_generation": {...},
+}
+
+class PromptManager:
+    def get_prompt(self, task: str, version: str = "latest") -> PromptVersion:
+        """指定バージョンのプロンプトを取得"""
+        versions = PROMPT_REGISTRY.get(task, {})
+        if version == "latest":
+            return versions[max(versions.keys())]
+        return versions[version]
+
+    def validate_output(self, output: dict, prompt: PromptVersion) -> bool:
+        """出力がスキーマに準拠しているか検証"""
+        import jsonschema
+        try:
+            jsonschema.validate(output, prompt.expected_output_schema)
+            return True
+        except jsonschema.ValidationError:
+            return False
+```
+
+### 14.2 翻訳品質検証
+
+```python
+@dataclass
+class TranslationQualityCheck:
+    segment_id: int
+    original_length: int
+    translated_length: int
+    length_ratio: float
+    has_untranslated: bool      # 原文が残っている
+    has_placeholder: bool       # [翻訳不可] などが含まれる
+    confidence_score: float     # 0.0-1.0
+
+def validate_translation(
+    original: str,
+    translated: str,
+    source_lang: str,
+    target_lang: str
+) -> TranslationQualityCheck:
+    """翻訳品質を検証"""
+    checks = TranslationQualityCheck(...)
+
+    # 長さ比率チェック（極端な差異は問題の可能性）
+    ratio = len(translated) / len(original) if original else 0
+    if source_lang == "en" and target_lang == "ja":
+        # 英→日は通常0.5〜1.5倍
+        if ratio < 0.3 or ratio > 2.0:
+            checks.confidence_score *= 0.5
+
+    # 原文残留チェック
+    if source_lang == "en" and re.search(r'[a-zA-Z]{5,}', translated):
+        checks.has_untranslated = True
+        checks.confidence_score *= 0.7
+
+    # プレースホルダーチェック
+    if re.search(r'\[.*不可.*\]|\[.*error.*\]', translated, re.I):
+        checks.has_placeholder = True
+        checks.confidence_score = 0.0
+
+    return checks
+
+async def translate_with_quality_check(
+    segments: List[TranscriptionSegment],
+    target_lang: str,
+    quality_threshold: float = 0.7
+) -> TranslationResult:
+    """品質チェック付き翻訳"""
+    result = await translate(segments, target_lang)
+
+    low_quality_segments = []
+    for translated in result.translated_segments:
+        check = validate_translation(
+            translated.original_text,
+            translated.translated_text,
+            result.source_language,
+            target_lang
+        )
+        if check.confidence_score < quality_threshold:
+            low_quality_segments.append(translated.id)
+            translated.flags.append("low_quality_translation")
+
+    if low_quality_segments:
+        result.warnings.append(
+            f"{len(low_quality_segments)}件の翻訳品質が低い可能性があります"
+        )
+
+    return result
+```
+
+### 14.3 コスト監視機能
+
+```python
+@dataclass
+class UsageRecord:
+    timestamp: datetime
+    task: str                # translation, highlight, etc.
+    provider: str            # gemini, ollama
+    model: str
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: float
+    video_id: str
+
+class CostMonitor:
+    """API使用量とコストの監視"""
+
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+
+    def record_usage(self, record: UsageRecord) -> None:
+        """使用量を記録"""
+        ...
+
+    def get_daily_usage(self, date: datetime = None) -> dict:
+        """日次使用量を取得"""
+        return {
+            "total_requests": 150,
+            "total_input_tokens": 50000,
+            "total_output_tokens": 15000,
+            "estimated_cost_usd": 0.15,
+            "breakdown_by_task": {...}
+        }
+
+    def get_monthly_usage(self, month: int, year: int) -> dict:
+        """月次使用量を取得"""
+        ...
+
+    def check_quota(self, estimated_tokens: int) -> QuotaStatus:
+        """クォータチェック"""
+        daily_limit = 1_000_000  # トークン
+        current_usage = self.get_daily_usage()["total_input_tokens"]
+
+        return QuotaStatus(
+            within_limit=current_usage + estimated_tokens < daily_limit,
+            current_usage=current_usage,
+            limit=daily_limit,
+            estimated_cost=self._estimate_cost(estimated_tokens)
+        )
+
+    def _estimate_cost(self, tokens: int) -> float:
+        """コスト見積もり（Gemini Flash料金）"""
+        # $0.075 / 1M input tokens (2026年1月時点)
+        return tokens * 0.075 / 1_000_000
+
+# 設定画面での表示
+"""
+📊 API使用状況
+─────────────────────
+今月の使用量:
+  リクエスト: 1,234 回
+  トークン: 2.5M
+  推定コスト: $0.19
+
+日次制限: 1M トークン
+今日の使用: 150K (15%)
+"""
+```
+
+### 14.4 Ollama起動失敗時の対処
+
+```python
+class OllamaManager:
+    """Ollamaのライフサイクル管理"""
+
+    async def ensure_running(self) -> bool:
+        """Ollamaが起動していることを確認、必要なら起動"""
+        if await self.is_running():
+            return True
+
+        return await self.start()
+
+    async def is_running(self) -> bool:
+        """Ollamaが起動しているか確認"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "http://localhost:11434/api/tags",
+                    timeout=aiohttp.ClientTimeout(total=2)
+                ) as response:
+                    return response.status == 200
+        except:
+            return False
+
+    async def start(self) -> bool:
+        """Ollamaを起動"""
+        import subprocess
+        import sys
+
+        try:
+            if sys.platform == "darwin":
+                # macOS: アプリを起動
+                subprocess.Popen(["open", "-a", "Ollama"])
+            elif sys.platform == "win32":
+                # Windows: サービスを起動
+                subprocess.Popen(["ollama", "serve"])
+            else:
+                # Linux: systemctl or 直接起動
+                subprocess.Popen(["ollama", "serve"])
+
+            # 起動待機（最大30秒）
+            for _ in range(30):
+                await asyncio.sleep(1)
+                if await self.is_running():
+                    return True
+
+            return False
+        except Exception as e:
+            logger.error(f"Ollama startup failed: {e}")
+            return False
+
+    async def ensure_model(self, model: str) -> bool:
+        """モデルが存在することを確認、なければダウンロード"""
+        models = await self.list_models()
+        if model in models:
+            return True
+
+        return await self.pull_model(model)
+
+# エラーハンドリングフロー
+async def execute_with_ollama_fallback(task: str, prompt: str):
+    manager = OllamaManager()
+
+    # 1. Ollama起動確認
+    if not await manager.ensure_running():
+        if config.fallback_to_gemini:
+            logger.warning("Ollama unavailable, falling back to Gemini")
+            return await gemini_client.generate(prompt)
+        raise OllamaNotRunningError("Ollamaを起動できませんでした")
+
+    # 2. モデル確認
+    if not await manager.ensure_model(config.local_model):
+        raise OllamaModelNotFoundError(f"モデル {config.local_model} が見つかりません")
+
+    # 3. 実行
+    return await ollama_client.generate(prompt)
+```
+
+### 14.5 レスポンスパース失敗時の対処
+
+```python
+@dataclass
+class ParseResult:
+    success: bool
+    data: Optional[dict]
+    raw_text: str
+    error: Optional[str]
+    retry_recommended: bool
+
+def parse_llm_response(response: str, expected_schema: dict) -> ParseResult:
+    """LLMレスポンスをパース（堅牢性向上版）"""
+
+    # 1. 標準JSONパース
+    try:
+        data = json.loads(response)
+        return ParseResult(success=True, data=data, raw_text=response, error=None, retry_recommended=False)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. マークダウンコードブロック内のJSON抽出
+    json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', response)
+    if json_match:
+        try:
+            data = json.loads(json_match.group(1))
+            return ParseResult(success=True, data=data, raw_text=response, error=None, retry_recommended=False)
+        except:
+            pass
+
+    # 3. 部分的なJSON抽出（{...}を探す）
+    brace_match = re.search(r'\{[\s\S]*\}', response)
+    if brace_match:
+        try:
+            data = json.loads(brace_match.group(0))
+            return ParseResult(success=True, data=data, raw_text=response, error=None, retry_recommended=False)
+        except:
+            pass
+
+    # 4. 配列の抽出
+    bracket_match = re.search(r'\[[\s\S]*\]', response)
+    if bracket_match:
+        try:
+            data = json.loads(bracket_match.group(0))
+            return ParseResult(success=True, data={"items": data}, raw_text=response, error=None, retry_recommended=False)
+        except:
+            pass
+
+    # 5. パース失敗
+    return ParseResult(
+        success=False,
+        data=None,
+        raw_text=response,
+        error="JSONをパースできませんでした",
+        retry_recommended=True
+    )
+
+async def execute_with_parse_retry(
+    prompt: str,
+    expected_schema: dict,
+    max_retries: int = 2
+) -> dict:
+    """パース失敗時にリトライ"""
+    for attempt in range(max_retries + 1):
+        response = await llm_client.generate(prompt)
+        result = parse_llm_response(response.text, expected_schema)
+
+        if result.success:
+            return result.data
+
+        if attempt < max_retries and result.retry_recommended:
+            # リトライ時は明示的な指示を追加
+            prompt = f"{prompt}\n\n重要: 必ず有効なJSON形式で回答してください。説明文は不要です。"
+            continue
+
+        # 最終試行でも失敗
+        raise InvalidResponseError(
+            f"LLMレスポンスをパースできませんでした: {result.error}",
+            raw_response=result.raw_text
+        )
+```
+
+### 14.6 部分的成功の扱い
+
+100セグメント中10個だけ失敗した場合などの対処：
+
+```python
+@dataclass
+class PartialResult:
+    successful: List[TranslatedSegment]
+    failed: List[FailedSegment]
+    success_rate: float
+    can_proceed: bool  # 続行可能か
+
+@dataclass
+class FailedSegment:
+    segment_id: int
+    original_text: str
+    error: str
+    retryable: bool
+
+async def translate_with_partial_success(
+    segments: List[TranscriptionSegment],
+    target_lang: str,
+    min_success_rate: float = 0.9
+) -> PartialResult:
+    """部分的成功を許容する翻訳"""
+    successful = []
+    failed = []
+
+    # バッチ処理
+    for batch in chunk(segments, 50):
+        try:
+            result = await translate_batch(batch, target_lang)
+            successful.extend(result.translated_segments)
+        except Exception as e:
+            # バッチ全体が失敗した場合、個別にリトライ
+            for segment in batch:
+                try:
+                    result = await translate_single(segment, target_lang)
+                    successful.append(result)
+                except Exception as e2:
+                    failed.append(FailedSegment(
+                        segment_id=segment.id,
+                        original_text=segment.text,
+                        error=str(e2),
+                        retryable=is_retryable_error(e2)
+                    ))
+
+    success_rate = len(successful) / len(segments)
+
+    return PartialResult(
+        successful=successful,
+        failed=failed,
+        success_rate=success_rate,
+        can_proceed=success_rate >= min_success_rate
+    )
+
+# ユーザーへの通知
+"""
+⚠️ 一部の翻訳に失敗しました
+
+成功: 95/100 セグメント (95%)
+失敗: 5 セグメント
+
+失敗したセグメントは原文のまま表示されます。
+字幕編集画面で手動修正できます。
+
+[続行] [再試行] [キャンセル]
+"""
+```
+
+### 14.7 コンテキスト長超過の対処
+
+```python
+@dataclass
+class ChunkingConfig:
+    max_tokens_per_request: int = 4000
+    overlap_segments: int = 2  # 文脈維持のためのオーバーラップ
+
+def estimate_tokens(text: str) -> int:
+    """トークン数を概算（日本語は文字数×1.5、英語は単語数×1.3）"""
+    # 簡易推定
+    if re.search(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]', text):
+        return int(len(text) * 1.5)
+    else:
+        return int(len(text.split()) * 1.3)
+
+def chunk_segments_by_tokens(
+    segments: List[TranscriptionSegment],
+    config: ChunkingConfig
+) -> List[List[TranscriptionSegment]]:
+    """トークン数に基づいてセグメントをチャンク分割"""
+    chunks = []
+    current_chunk = []
+    current_tokens = 0
+
+    for segment in segments:
+        segment_tokens = estimate_tokens(segment.text)
+
+        if current_tokens + segment_tokens > config.max_tokens_per_request:
+            # 新しいチャンクを開始
+            if current_chunk:
+                chunks.append(current_chunk)
+            # オーバーラップ
+            overlap = current_chunk[-config.overlap_segments:] if current_chunk else []
+            current_chunk = overlap + [segment]
+            current_tokens = sum(estimate_tokens(s.text) for s in current_chunk)
+        else:
+            current_chunk.append(segment)
+            current_tokens += segment_tokens
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
+
+async def translate_long_content(
+    segments: List[TranscriptionSegment],
+    target_lang: str
+) -> TranslationResult:
+    """長いコンテンツを分割して翻訳"""
+    config = ChunkingConfig()
+    chunks = chunk_segments_by_tokens(segments, config)
+
+    all_translated = []
+    for i, chunk in enumerate(chunks):
+        # 文脈情報を追加
+        context = ""
+        if i > 0:
+            context = f"前の文脈: 「{all_translated[-1].translated_text}」\n"
+
+        result = await translate_batch(chunk, target_lang, context=context)
+        all_translated.extend(result.translated_segments)
+
+    # オーバーラップ部分の重複を解消
+    seen_ids = set()
+    deduplicated = []
+    for segment in all_translated:
+        if segment.id not in seen_ids:
+            seen_ids.add(segment.id)
+            deduplicated.append(segment)
+
+    return TranslationResult(translated_segments=deduplicated, ...)
+```
+
+---
+
+## 更新履歴
+
+| 日付 | 内容 |
+|------|------|
+| 2026-01-19 | 初版作成 |
+| 2026-01-19 | 追加仕様（プロンプトバージョン、品質検証、コスト監視等）を追記 |

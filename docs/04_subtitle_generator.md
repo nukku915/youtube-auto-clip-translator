@@ -509,3 +509,318 @@ ASS形式ではフォントを埋め込むことはできないが、FFmpegで�
 - [ ] 特殊文字を含むテキスト
 - [ ] Shorts用レイアウト
 - [ ] FFmpegでの焼き付け動作確認
+
+---
+
+## 16. 追加仕様
+
+### 16.1 特殊文字エスケープ
+
+ASS形式での特殊文字の扱い：
+
+```python
+def escape_ass_text(text: str) -> str:
+    """ASS形式のテキストをエスケープ"""
+    # ASSの特殊文字
+    replacements = {
+        "\\": "\\\\",     # バックスラッシュ
+        "{": "\\{",       # 波括弧開始（スタイル制御に使用）
+        "}": "\\}",       # 波括弧終了
+        "\n": "\\N",      # 改行
+    }
+
+    for char, escaped in replacements.items():
+        text = text.replace(char, escaped)
+
+    return text
+
+def escape_srt_text(text: str) -> str:
+    """SRT形式のテキストをエスケープ"""
+    # SRTでは特殊なエスケープは不要だが、HTMLタグに注意
+    # 一部のプレーヤーは <i> <b> 等を解釈する
+    replacements = {
+        "<": "&lt;",
+        ">": "&gt;",
+    }
+
+    for char, escaped in replacements.items():
+        text = text.replace(char, escaped)
+
+    return text
+
+# 使用例
+"""
+入力: "Hello {world}"
+ASS出力: "Hello \\{world\\}"
+
+入力: "Line1\nLine2"
+ASS出力: "Line1\\NLine2"
+"""
+```
+
+### 16.2 RTL言語対応
+
+**MVP では非対応**。アラビア語、ヘブライ語等の右から左に書く言語。
+
+```python
+# 将来対応時の設計
+RTL_LANGUAGES = ["ar", "he", "fa", "ur"]
+
+def is_rtl_language(lang_code: str) -> bool:
+    """RTL言語かどうか判定"""
+    return lang_code in RTL_LANGUAGES
+
+def format_rtl_text(text: str, lang: str) -> str:
+    """RTLテキストのフォーマット"""
+    if is_rtl_language(lang):
+        # Unicode制御文字を使用
+        # RLM (Right-to-Left Mark): U+200F
+        # RLE (Right-to-Left Embedding): U+202B
+        return f"\u202B{text}\u202C"
+    return text
+
+# ASS形式でのRTL対応
+"""
+Style: Arabic,Arabic Typesetting,48,&HFFFFFF,&H000000,1,2,50
+Dialogue: 0,0:00:01.00,0:00:04.00,Arabic,{\an7}مرحبا بالجميع
+"""
+# \an7 = 右上揃え（RTL用）
+```
+
+**MVPでの対応方針**:
+- RTL言語が検出された場合、警告を表示
+- 「この言語は現在サポートされていません」
+
+### 16.3 絵文字対応
+
+```python
+import emoji
+import unicodedata
+
+def contains_emoji(text: str) -> bool:
+    """テキストに絵文字が含まれるか"""
+    return emoji.emoji_count(text) > 0
+
+def get_emoji_aware_length(text: str) -> int:
+    """絵文字を考慮した文字数カウント"""
+    # 絵文字は1文字としてカウント（表示幅は2文字分の場合あり）
+    return len(text) - emoji.emoji_count(text) + emoji.emoji_count(text) * 2
+
+def check_font_emoji_support(font_path: Path) -> bool:
+    """フォントが絵文字をサポートしているか確認"""
+    # Noto Color Emoji等が必要
+    ...
+
+# フォントフォールバック設定
+EMOJI_FONT_FALLBACK = {
+    "windows": "Segoe UI Emoji",
+    "macos": "Apple Color Emoji",
+    "linux": "Noto Color Emoji",
+}
+
+# ASS形式での絵文字フォント指定
+def create_ass_with_emoji_support(style_config: SubtitleStyleConfig) -> str:
+    """絵文字対応ASSスタイルを生成"""
+    import sys
+
+    emoji_font = EMOJI_FONT_FALLBACK.get(sys.platform, "Noto Color Emoji")
+
+    return f"""
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, Bold, Alignment, MarginV
+Style: Default,{style_config.font_family},48,&HFFFFFF,&H000000,1,2,50
+Style: Emoji,{emoji_font},48,&HFFFFFF,&H000000,0,2,50
+"""
+```
+
+### 16.4 フォントフォールバック
+
+```python
+@dataclass
+class FontConfig:
+    primary: str = "Noto Sans JP"
+    fallback_chain: List[str] = field(default_factory=lambda: [
+        "Noto Sans CJK JP",
+        "Hiragino Sans",
+        "Yu Gothic",
+        "MS Gothic",
+        "sans-serif"
+    ])
+
+def find_available_font(config: FontConfig) -> str:
+    """利用可能なフォントを検索"""
+    from matplotlib import font_manager
+
+    all_fonts = [f.name for f in font_manager.fontManager.ttflist]
+
+    # プライマリフォントをチェック
+    if config.primary in all_fonts:
+        return config.primary
+
+    # フォールバックチェーン
+    for font in config.fallback_chain:
+        if font in all_fonts:
+            logger.warning(f"Font '{config.primary}' not found, using '{font}'")
+            return font
+
+    # 最終手段
+    logger.warning("No preferred fonts found, using system default")
+    return "sans-serif"
+
+def get_font_path(font_name: str) -> Optional[Path]:
+    """フォント名からパスを取得（FFmpeg用）"""
+    from matplotlib import font_manager
+
+    matches = font_manager.findSystemFonts(fontpaths=None, fontext='ttf')
+    for path in matches:
+        try:
+            font = font_manager.FontProperties(fname=path)
+            if font.get_name() == font_name:
+                return Path(path)
+        except:
+            continue
+    return None
+```
+
+### 16.5 行数が多い時の分割
+
+```python
+@dataclass
+class LineSplitConfig:
+    max_lines: int = 2
+    max_chars_per_line: int = 40
+    min_segment_duration: float = 1.5  # 分割後の最小表示時間
+
+def split_long_subtitle(
+    entry: SubtitleEntry,
+    config: LineSplitConfig
+) -> List[SubtitleEntry]:
+    """長い字幕を複数に分割"""
+    text = entry.text
+    lines = text.split("\\N")  # ASS形式の改行
+
+    # 行数がmax_lines以下ならそのまま
+    if len(lines) <= config.max_lines:
+        return [entry]
+
+    # 分割が必要
+    duration = entry.end - entry.start
+    split_entries = []
+
+    # 2行ずつのグループに分割
+    for i in range(0, len(lines), config.max_lines):
+        group_lines = lines[i:i + config.max_lines]
+        group_text = "\\N".join(group_lines)
+
+        # 時間を比例配分
+        char_ratio = len(group_text) / len(text.replace("\\N", ""))
+        group_duration = max(duration * char_ratio, config.min_segment_duration)
+
+        split_entries.append(SubtitleEntry(
+            id=entry.id * 100 + len(split_entries),
+            start=entry.start + sum(e.end - e.start for e in split_entries),
+            end=entry.start + sum(e.end - e.start for e in split_entries) + group_duration,
+            text=group_text,
+            style=entry.style
+        ))
+
+    return split_entries
+
+def format_long_text(text: str, config: LineSplitConfig) -> List[str]:
+    """長いテキストを適切な行に分割"""
+    words = text.split()
+    lines = []
+    current_line = []
+    current_length = 0
+
+    for word in words:
+        word_length = len(word)
+        if current_length + word_length + 1 > config.max_chars_per_line:
+            lines.append(" ".join(current_line))
+            current_line = [word]
+            current_length = word_length
+        else:
+            current_line.append(word)
+            current_length += word_length + 1
+
+    if current_line:
+        lines.append(" ".join(current_line))
+
+    return lines
+```
+
+### 16.6 読み速度の自動調整
+
+```python
+@dataclass
+class ReadingSpeedConfig:
+    # 言語別の読み速度（文字/秒）
+    chars_per_second: Dict[str, float] = field(default_factory=lambda: {
+        "ja": 8.0,    # 日本語: 1秒に8文字
+        "en": 15.0,   # 英語: 1秒に15文字（約3語）
+        "zh": 6.0,    # 中国語: 1秒に6文字
+        "ko": 10.0,   # 韓国語: 1秒に10文字
+        "es": 15.0,   # スペイン語
+        "fr": 14.0,   # フランス語
+        "de": 14.0,   # ドイツ語
+    })
+
+    min_duration: float = 1.0     # 最小表示時間（秒）
+    max_duration: float = 8.0     # 最大表示時間（秒）
+    buffer_ratio: float = 1.2     # 余裕を持たせる係数
+
+def calculate_optimal_duration(
+    text: str,
+    language: str,
+    config: ReadingSpeedConfig = None
+) -> float:
+    """テキストの最適な表示時間を計算"""
+    if config is None:
+        config = ReadingSpeedConfig()
+
+    cps = config.chars_per_second.get(language, 12.0)  # デフォルト: 12文字/秒
+
+    # 文字数（改行等を除く）
+    char_count = len(text.replace("\\N", "").replace(" ", ""))
+
+    # 必要な読み取り時間
+    required_time = char_count / cps * config.buffer_ratio
+
+    # min/maxでクリップ
+    return max(config.min_duration, min(config.max_duration, required_time))
+
+def adjust_subtitle_timing(
+    entries: List[SubtitleEntry],
+    language: str,
+    config: ReadingSpeedConfig = None
+) -> List[SubtitleEntry]:
+    """字幕のタイミングを読み速度に基づいて調整"""
+    adjusted = []
+
+    for entry in entries:
+        optimal_duration = calculate_optimal_duration(entry.text, language, config)
+        current_duration = entry.end - entry.start
+
+        if current_duration < optimal_duration * 0.8:
+            # 表示時間が短すぎる
+            entry.flags.append("display_time_short")
+            # 可能であれば延長（次の字幕とのギャップを確認）
+            ...
+
+        if current_duration > optimal_duration * 2.0:
+            # 表示時間が長すぎる（分割を検討）
+            entry.flags.append("display_time_long")
+
+        adjusted.append(entry)
+
+    return adjusted
+```
+
+---
+
+## 更新履歴
+
+| 日付 | 内容 |
+|------|------|
+| 2026-01-19 | 初版作成 |
+| 2026-01-19 | 追加仕様（特殊文字、絵文字、読み速度等）を追記 |
