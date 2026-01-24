@@ -408,6 +408,30 @@
         "avg": 0.0,
         "level": "new"
       }
+    },
+    "Peanut": {
+      "name": "Peanut",
+      "team": "HLE",
+      "role": "Jungle",
+      "embedding_file": "peanut.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.0,
+        "avg": 0.0,
+        "level": "new"
+      }
+    },
+    "Viper": {
+      "name": "Viper",
+      "team": "HLE",
+      "role": "ADC",
+      "embedding_file": "viper.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.0,
+        "avg": 0.0,
+        "level": "new"
+      }
     }
   },
   "stats": {
@@ -416,5 +440,5 @@
     "medium_accuracy": 12,
     "low_accuracy": 6
   },
-  "updated": "2026-01-24T17:08:48.105902"
+  "updated": "2026-01-24T17:20:30.379815"
 }
