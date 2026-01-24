@@ -1,7 +1,9 @@
 {
   "Gumayusi": {
     "num_samples": 6,
-    "embedding_path": "data/speaker_embeddings_v2/gumayusi.npy"
+    "embedding_path": "data/speaker_embeddings_v2/gumayusi.npy",
+    "status": "needs_correction",
+    "note": "Incorrectly updated from T1 video - Gumayusi was not in the video"
   },
   "Oner": {
     "num_samples": 4,

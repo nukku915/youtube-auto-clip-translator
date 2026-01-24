@@ -1,0 +1,395 @@
+{
+  "version": "2.0",
+  "created": "2026-01-24T14:05:06.722367",
+  "season": "LCK 2026",
+  "teams": {
+    "T1": {
+      "players": [
+        "Doran",
+        "Oner",
+        "Faker",
+        "Peyz",
+        "Keria"
+      ],
+      "roles": {
+        "Doran": "Top",
+        "Oner": "Jungle",
+        "Faker": "Mid",
+        "Peyz": "ADC",
+        "Keria": "Support"
+      }
+    },
+    "GenG": {
+      "players": [
+        "Kiin",
+        "Canyon",
+        "Chovy",
+        "Ruler",
+        "Duro"
+      ],
+      "roles": {
+        "Kiin": "Top",
+        "Canyon": "Jungle",
+        "Chovy": "Mid",
+        "Ruler": "ADC",
+        "Duro": "Support"
+      }
+    },
+    "HLE": {
+      "players": [
+        "Zeus",
+        "Kanavi",
+        "Zeka",
+        "Gumayusi",
+        "Delight"
+      ],
+      "roles": {
+        "Zeus": "Top",
+        "Kanavi": "Jungle",
+        "Zeka": "Mid",
+        "Gumayusi": "ADC",
+        "Delight": "Support"
+      }
+    },
+    "DK": {
+      "players": [
+        "Siwoo",
+        "Lucid",
+        "Showmaker",
+        "Smash",
+        "Career"
+      ],
+      "roles": {
+        "Siwoo": "Top",
+        "Lucid": "Jungle",
+        "Showmaker": "Mid",
+        "Smash": "ADC",
+        "Career": "Support"
+      }
+    },
+    "KT": {
+      "players": [
+        "PerfecT",
+        "Cuzz",
+        "Bdd",
+        "Aiming",
+        "Ghost"
+      ],
+      "roles": {
+        "PerfecT": "Top",
+        "Cuzz": "Jungle",
+        "Bdd": "Mid",
+        "Aiming": "ADC",
+        "Ghost": "Support"
+      }
+    }
+  },
+  "players": {
+    "Doran": {
+      "name": "Doran",
+      "team": "T1",
+      "role": "Top",
+      "embedding_file": "doran.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.553,
+        "avg": 0.331,
+        "level": "high"
+      }
+    },
+    "Oner": {
+      "name": "Oner",
+      "team": "T1",
+      "role": "Jungle",
+      "embedding_file": "oner.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.547,
+        "avg": 0.398,
+        "level": "medium"
+      }
+    },
+    "Faker": {
+      "name": "Faker",
+      "team": "T1",
+      "role": "Mid",
+      "embedding_file": "faker.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.565,
+        "avg": 0.346,
+        "level": "high"
+      }
+    },
+    "Peyz": {
+      "name": "Peyz",
+      "team": "T1",
+      "role": "ADC",
+      "embedding_file": "peyz.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.529,
+        "avg": 0.322,
+        "level": "medium"
+      }
+    },
+    "Keria": {
+      "name": "Keria",
+      "team": "T1",
+      "role": "Support",
+      "embedding_file": "keria.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.53,
+        "avg": 0.341,
+        "level": "medium"
+      }
+    },
+    "Kiin": {
+      "name": "Kiin",
+      "team": "GenG",
+      "role": "Top",
+      "embedding_file": "kiin.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.458,
+        "avg": 0.207,
+        "level": "medium"
+      }
+    },
+    "Canyon": {
+      "name": "Canyon",
+      "team": "GenG",
+      "role": "Jungle",
+      "embedding_file": "canyon.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.641,
+        "avg": 0.271,
+        "level": "high"
+      }
+    },
+    "Chovy": {
+      "name": "Chovy",
+      "team": "GenG",
+      "role": "Mid",
+      "embedding_file": "chovy.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.663,
+        "avg": 0.307,
+        "level": "high"
+      }
+    },
+    "Ruler": {
+      "name": "Ruler",
+      "team": "GenG",
+      "role": "ADC",
+      "embedding_file": "ruler.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.627,
+        "avg": 0.358,
+        "level": "high"
+      }
+    },
+    "Duro": {
+      "name": "Duro",
+      "team": "GenG",
+      "role": "Support",
+      "embedding_file": "duro.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.531,
+        "avg": 0.243,
+        "level": "medium"
+      }
+    },
+    "Zeus": {
+      "name": "Zeus",
+      "team": "HLE",
+      "role": "Top",
+      "embedding_file": "zeus.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.443,
+        "avg": 0.263,
+        "level": "medium"
+      }
+    },
+    "Kanavi": {
+      "name": "Kanavi",
+      "team": "HLE",
+      "role": "Jungle",
+      "embedding_file": "kanavi.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.465,
+        "avg": 0.197,
+        "level": "medium"
+      }
+    },
+    "Zeka": {
+      "name": "Zeka",
+      "team": "HLE",
+      "role": "Mid",
+      "embedding_file": "zeka.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.578,
+        "avg": 0.306,
+        "level": "high"
+      }
+    },
+    "Gumayusi": {
+      "name": "Gumayusi",
+      "team": "HLE",
+      "role": "ADC",
+      "embedding_file": "gumayusi.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.469,
+        "avg": 0.266,
+        "level": "medium"
+      }
+    },
+    "Delight": {
+      "name": "Delight",
+      "team": "HLE",
+      "role": "Support",
+      "embedding_file": "delight.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.534,
+        "avg": 0.207,
+        "level": "medium"
+      }
+    },
+    "Siwoo": {
+      "name": "Siwoo",
+      "team": "DK",
+      "role": "Top",
+      "embedding_file": "siwoo.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.392,
+        "avg": 0.21,
+        "level": "low"
+      }
+    },
+    "Lucid": {
+      "name": "Lucid",
+      "team": "DK",
+      "role": "Jungle",
+      "embedding_file": "lucid.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.471,
+        "avg": 0.224,
+        "level": "medium"
+      }
+    },
+    "Showmaker": {
+      "name": "Showmaker",
+      "team": "DK",
+      "role": "Mid",
+      "embedding_file": "showmaker.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.489,
+        "avg": 0.286,
+        "level": "medium"
+      }
+    },
+    "Smash": {
+      "name": "Smash",
+      "team": "DK",
+      "role": "ADC",
+      "embedding_file": "smash.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.331,
+        "avg": 0.173,
+        "level": "low"
+      }
+    },
+    "Career": {
+      "name": "Career",
+      "team": "DK",
+      "role": "Support",
+      "embedding_file": "career.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.393,
+        "avg": 0.192,
+        "level": "low"
+      }
+    },
+    "PerfecT": {
+      "name": "PerfecT",
+      "team": "KT",
+      "role": "Top",
+      "embedding_file": "perfect.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.352,
+        "avg": 0.182,
+        "level": "low"
+      }
+    },
+    "Cuzz": {
+      "name": "Cuzz",
+      "team": "KT",
+      "role": "Jungle",
+      "embedding_file": "cuzz.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.502,
+        "avg": 0.198,
+        "level": "medium"
+      }
+    },
+    "Bdd": {
+      "name": "Bdd",
+      "team": "KT",
+      "role": "Mid",
+      "embedding_file": "bdd.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.37,
+        "avg": 0.16,
+        "level": "low"
+      }
+    },
+    "Aiming": {
+      "name": "Aiming",
+      "team": "KT",
+      "role": "ADC",
+      "embedding_file": "aiming.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.287,
+        "avg": 0.149,
+        "level": "low"
+      }
+    },
+    "Ghost": {
+      "name": "Ghost",
+      "team": "KT",
+      "role": "Support",
+      "embedding_file": "ghost.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.487,
+        "avg": 0.257,
+        "level": "medium"
+      }
+    }
+  },
+  "stats": {
+    "total_players": 25,
+    "high_accuracy": 6,
+    "medium_accuracy": 13,
+    "low_accuracy": 6
+  }
+}
