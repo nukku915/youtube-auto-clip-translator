@@ -384,6 +384,18 @@
         "avg": 0.257,
         "level": "medium"
       }
+    },
+    "Lehends": {
+      "name": "Lehends",
+      "team": "GenG",
+      "role": "Support",
+      "embedding_file": "lehends.npy",
+      "has_embedding": true,
+      "accuracy": {
+        "max": 0.0,
+        "avg": 0.0,
+        "level": "new"
+      }
     }
   },
   "stats": {
@@ -392,5 +404,5 @@
     "medium_accuracy": 12,
     "low_accuracy": 6
   },
-  "updated": "2026-01-24T16:53:01.893448"
+  "updated": "2026-01-24T17:05:15.464171"
 }
