@@ -9,6 +9,7 @@ venv/
 # ML Models (large files)
 mlx_models/
 models/
+.speechbrain_cache/
 
 # Output
 output/
@@ -16,6 +17,15 @@ temp/
 *.mp4
 *.mp3
 *.wav
+*.srt
+
+# Downloaded content (large files)
+downloads/
+data/interviews/
+data/team_voice/
+
+# Keep speaker embeddings
+!data/speaker_embeddings_v2/
 
 # IDE
 .vscode/
@@ -23,3 +33,4 @@ temp/
 
 # OS
 .DS_Store
+Finderで/

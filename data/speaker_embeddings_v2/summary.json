@@ -1,0 +1,86 @@
+{
+  "Gumayusi": {
+    "num_samples": 6,
+    "embedding_path": "data/speaker_embeddings_v2/gumayusi.npy"
+  },
+  "Oner": {
+    "num_samples": 4,
+    "embedding_path": "data/speaker_embeddings_v2/oner.npy"
+  },
+  "Faker": {
+    "num_samples": 4,
+    "embedding_path": "data/speaker_embeddings_v2/faker.npy"
+  },
+  "Rich": {
+    "num_samples": 2,
+    "embedding_path": "data/speaker_embeddings_v2/rich.npy"
+  },
+  "Teddy": {
+    "num_samples": 2,
+    "embedding_path": "data/speaker_embeddings_v2/teddy.npy"
+  },
+  "Keria": {
+    "num_samples": 4,
+    "embedding_path": "data/speaker_embeddings_v2/keria.npy"
+  },
+  "Doran": {
+    "num_samples": 2,
+    "embedding_path": "data/speaker_embeddings_v2/doran.npy"
+  },
+  "Zeus": {
+    "num_samples": 4,
+    "embedding_path": "data/speaker_embeddings_v2/zeus.npy"
+  },
+  "Chovy": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/chovy.npy"
+  },
+  "Canyon": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/canyon.npy"
+  },
+  "BDD": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/bdd.npy"
+  },
+  "Aiming": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/aiming.npy"
+  },
+  "Kiin": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/kiin.npy"
+  },
+  "Kingen": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/kingen.npy"
+  },
+  "Deokdam": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/deokdam.npy"
+  },
+  "Kellin": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/kellin.npy"
+  },
+  "Kanavi": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/kanavi.npy"
+  },
+  "Ghost": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/ghost.npy"
+  },
+  "Ruler": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/ruler.npy"
+  },
+  "Showmaker": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/showmaker.npy"
+  },
+  "Clozer": {
+    "num_samples": 1,
+    "embedding_path": "data/speaker_embeddings_v2/clozer.npy"
+  }
+}
