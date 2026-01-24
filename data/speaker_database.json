@@ -92,9 +92,9 @@
       "embedding_file": "doran.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.553,
-        "avg": 0.331,
-        "level": "high"
+        "max": 0.497,
+        "avg": 0.326,
+        "level": "medium"
       }
     },
     "Oner": {
@@ -104,9 +104,9 @@
       "embedding_file": "oner.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.547,
-        "avg": 0.398,
-        "level": "medium"
+        "max": 0.563,
+        "avg": 0.391,
+        "level": "high"
       }
     },
     "Faker": {
@@ -116,8 +116,8 @@
       "embedding_file": "faker.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.565,
-        "avg": 0.346,
+        "max": 0.659,
+        "avg": 0.352,
         "level": "high"
       }
     },
@@ -140,9 +140,9 @@
       "embedding_file": "keria.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.53,
-        "avg": 0.341,
-        "level": "medium"
+        "max": 0.571,
+        "avg": 0.334,
+        "level": "high"
       }
     },
     "Kiin": {
@@ -248,8 +248,8 @@
       "embedding_file": "gumayusi.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.469,
-        "avg": 0.266,
+        "max": 0.514,
+        "avg": 0.355,
         "level": "medium"
       }
     },
@@ -388,8 +388,9 @@
   },
   "stats": {
     "total_players": 25,
-    "high_accuracy": 6,
-    "medium_accuracy": 13,
+    "high_accuracy": 7,
+    "medium_accuracy": 12,
     "low_accuracy": 6
-  }
+  },
+  "updated": "2026-01-24T16:53:01.893448"
 }
