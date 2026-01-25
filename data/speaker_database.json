@@ -104,9 +104,10 @@
       "embedding_file": "oner.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.563,
-        "avg": 0.391,
-        "level": "high"
+        "max": 0.5039535760879517,
+        "avg": 0.4504830837249756,
+        "level": "high",
+        "collected_segments": 8
       }
     },
     "Faker": {
@@ -116,9 +117,11 @@
       "embedding_file": "faker.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.659,
-        "avg": 0.352,
-        "level": "high"
+        "max": 0.8207319974899292,
+        "avg": 0.5230199694633484,
+        "level": "high",
+        "source": "diarization_matched",
+        "collected_segments": 16
       }
     },
     "Peyz": {
@@ -141,8 +144,10 @@
       "has_embedding": true,
       "accuracy": {
         "max": 0.571,
-        "avg": 0.334,
-        "level": "high"
+        "avg": 0.40804266929626465,
+        "level": "medium",
+        "source": "diarization_matched",
+        "collected_segments": 3
       }
     },
     "Kiin": {
@@ -165,8 +170,10 @@
       "has_embedding": true,
       "accuracy": {
         "max": 0.641,
-        "avg": 0.271,
-        "level": "high"
+        "avg": 0.39474189281463623,
+        "level": "high",
+        "source": "diarization_matched",
+        "collected_segments": 3
       }
     },
     "Chovy": {
@@ -177,8 +184,10 @@
       "has_embedding": true,
       "accuracy": {
         "max": 0.663,
-        "avg": 0.307,
-        "level": "high"
+        "avg": 0.40322017669677734,
+        "level": "medium",
+        "source": "diarization_matched",
+        "collected_segments": 3
       }
     },
     "Ruler": {
@@ -189,8 +198,10 @@
       "has_embedding": true,
       "accuracy": {
         "max": 0.627,
-        "avg": 0.358,
-        "level": "high"
+        "avg": 0.43590933084487915,
+        "level": "high",
+        "source": "diarization_matched",
+        "collected_segments": 3
       }
     },
     "Duro": {
@@ -296,9 +307,11 @@
       "embedding_file": "showmaker.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.489,
-        "avg": 0.286,
-        "level": "medium"
+        "max": 0.6613114476203918,
+        "avg": 0.46675360202789307,
+        "level": "high",
+        "source": "diarization_matched",
+        "collected_segments": 10
       }
     },
     "Smash": {
@@ -344,9 +357,11 @@
       "embedding_file": "cuzz.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.502,
-        "avg": 0.198,
-        "level": "medium"
+        "max": 0.8579213619232178,
+        "avg": 0.529645562171936,
+        "level": "high",
+        "source": "diarization_matched",
+        "collected_segments": 15
       }
     },
     "Bdd": {
@@ -356,9 +371,11 @@
       "embedding_file": "bdd.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.37,
-        "avg": 0.16,
-        "level": "low"
+        "max": 0.5772865414619446,
+        "avg": 0.3449334502220154,
+        "level": "high",
+        "source": "diarization_matched",
+        "collected_segments": 3
       }
     },
     "Aiming": {
@@ -392,9 +409,11 @@
       "embedding_file": "lehends.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.0,
-        "avg": 0.0,
-        "level": "new"
+        "max": 0.6393449902534485,
+        "avg": 0.4511311948299408,
+        "level": "high",
+        "source": "diarization_matched",
+        "collected_segments": 19
       }
     },
     "VicLa": {
@@ -428,9 +447,11 @@
       "embedding_file": "viper.npy",
       "has_embedding": true,
       "accuracy": {
-        "max": 0.0,
-        "avg": 0.0,
-        "level": "new"
+        "max": 0.8316812515258789,
+        "avg": 0.5240246057510376,
+        "level": "high",
+        "source": "diarization_matched",
+        "collected_segments": 11
       }
     }
   },
@@ -440,5 +461,5 @@
     "medium_accuracy": 12,
     "low_accuracy": 6
   },
-  "updated": "2026-01-24T17:20:30.379815"
+  "updated": "2026-01-25T00:21:20.621161"
 }

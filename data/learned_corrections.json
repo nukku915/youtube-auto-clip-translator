@@ -1,0 +1,13 @@
+{
+  "corrections": {
+    "悟空": "ゾーニャ"
+  },
+  "history": [
+    {
+      "wrong": "悟空",
+      "correct": "ゾーニャ",
+      "context": "manual",
+      "timestamp": "2026-01-25T20:07:40.842869"
+    }
+  ]
+}
