@@ -1833,6 +1833,12 @@ if __name__ == "__main__":
     parser.add_argument('--remove-fix', metavar='WRONG',
                         help='学習済み翻訳修正を削除')
 
+    # ロースター管理オプション
+    parser.add_argument('--roster', choices=['show', 'validate', 'sync'],
+                        help='ロースター管理（show=表示, validate=検証, sync=同期）')
+    parser.add_argument('--no-roster-check', action='store_true',
+                        help='起動時のロースター検証をスキップ')
+
     args = parser.parse_args()
 
     # 高品質モードの設定
@@ -1869,6 +1875,44 @@ if __name__ == "__main__":
         from lol_dictionary import remove_learned_correction
         remove_learned_correction(args.remove_fix)
         sys.exit(0)
+
+    # ロースター管理コマンド
+    if args.roster:
+        from roster_manager import print_official_rosters, validate_database, sync_database
+        if args.roster == 'show':
+            print_official_rosters()
+        elif args.roster == 'validate':
+            print("\n🔍 データベース検証中...")
+            errors = validate_database()
+            if errors:
+                print(f"\n❌ {len(errors)}件の問題:")
+                for err_type, msg in errors:
+                    print(f"  - {msg}")
+                print("\n💡 修正: python3 clip_with_speaker.py --roster sync")
+            else:
+                print("✅ ロースター問題なし")
+        elif args.roster == 'sync':
+            print("\n🔄 公式ロースターと同期中...")
+            updated = sync_database()
+            if updated:
+                print(f"\n✅ {len(updated)}件更新:")
+                for u in updated:
+                    print(f"  - {u}")
+            else:
+                print("✅ 既に同期済み")
+        sys.exit(0)
+
+    # 起動時ロースター検証（--no-roster-check でスキップ可）
+    if not args.no_roster_check:
+        try:
+            from roster_manager import validate_database, check_roster_freshness
+            check_roster_freshness()
+            errors = validate_database()
+            if errors:
+                print(f"⚠️ ロースターに{len(errors)}件の問題があります")
+                print("   修正: python3 clip_with_speaker.py --roster sync")
+        except ImportError:
+            pass  # roster_manager がない場合はスキップ
 
     if args.list_backups:
         if not AUTO_COLLECT_AVAILABLE:

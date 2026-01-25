@@ -82,6 +82,70 @@
         "Aiming": "ADC",
         "Ghost": "Support"
       }
+    },
+    "NS": {
+      "players": [
+        "Kingen",
+        "Sylvie",
+        "Scout",
+        "Jiwoo",
+        "Lehends"
+      ],
+      "roles": {
+        "Kingen": "Top",
+        "Sylvie": "Jungle",
+        "Scout": "Mid",
+        "Jiwoo": "ADC",
+        "Lehends": "Support"
+      }
+    },
+    "FEARX": {
+      "players": [
+        "Clear",
+        "Raptor",
+        "VicLa",
+        "Teddy",
+        "Peter"
+      ],
+      "roles": {
+        "Clear": "Top",
+        "Raptor": "Jungle",
+        "VicLa": "Mid",
+        "Teddy": "ADC",
+        "Peter": "Support"
+      }
+    },
+    "BRO": {
+      "players": [
+        "Morgan",
+        "Peanut",
+        "Clozer",
+        "Envyy",
+        "Effort"
+      ],
+      "roles": {
+        "Morgan": "Top",
+        "Peanut": "Jungle",
+        "Clozer": "Mid",
+        "Envyy": "ADC",
+        "Effort": "Support"
+      }
+    },
+    "OKS": {
+      "players": [
+        "Dudu",
+        "Willer",
+        "Fisher",
+        "Viper",
+        "Execute"
+      ],
+      "roles": {
+        "Dudu": "Top",
+        "Willer": "Jungle",
+        "Fisher": "Mid",
+        "Viper": "ADC",
+        "Execute": "Support"
+      }
     }
   },
   "players": {
@@ -404,7 +468,7 @@
     },
     "Lehends": {
       "name": "Lehends",
-      "team": "GenG",
+      "team": "NS",
       "role": "Support",
       "embedding_file": "lehends.npy",
       "has_embedding": true,
@@ -418,7 +482,7 @@
     },
     "VicLa": {
       "name": "VicLa",
-      "team": "DK",
+      "team": "FEARX",
       "role": "Mid",
       "embedding_file": "vicla.npy",
       "has_embedding": true,
@@ -430,7 +494,7 @@
     },
     "Peanut": {
       "name": "Peanut",
-      "team": "HLE",
+      "team": "BRO",
       "role": "Jungle",
       "embedding_file": "peanut.npy",
       "has_embedding": true,
@@ -438,11 +502,12 @@
         "max": 0.0,
         "avg": 0.0,
         "level": "new"
-      }
+      },
+      "note": "軍隊入隊"
     },
     "Viper": {
       "name": "Viper",
-      "team": "HLE",
+      "team": "OKS",
       "role": "ADC",
       "embedding_file": "viper.npy",
       "has_embedding": true,
@@ -461,5 +526,8 @@
     "medium_accuracy": 12,
     "low_accuracy": 6
   },
-  "updated": "2026-01-25T00:21:20.621161"
+  "updated": "2026-01-25T00:21:20.621161",
+  "roster_version": "2026-01-25",
+  "roster_source": "LCK 2026 Spring Official",
+  "roster_synced": "2026-01-25T20:26:21.266341"
 }
