@@ -1834,8 +1834,8 @@ if __name__ == "__main__":
                         help='学習済み翻訳修正を削除')
 
     # ロースター管理オプション
-    parser.add_argument('--roster', choices=['show', 'validate', 'sync'],
-                        help='ロースター管理（show=表示, validate=検証, sync=同期）')
+    parser.add_argument('--roster', choices=['show', 'validate', 'sync', 'update', 'auto'],
+                        help='ロースター管理（show=表示, validate=検証, sync=同期, update=Web取得, auto=自動更新）')
     parser.add_argument('--no-roster-check', action='store_true',
                         help='起動時のロースター検証をスキップ')
 
@@ -1878,7 +1878,7 @@ if __name__ == "__main__":
 
     # ロースター管理コマンド
     if args.roster:
-        from roster_manager import print_official_rosters, validate_database, sync_database
+        from roster_manager import print_official_rosters, validate_database, sync_database, auto_update_rosters
         if args.roster == 'show':
             print_official_rosters()
         elif args.roster == 'validate':
@@ -1900,6 +1900,26 @@ if __name__ == "__main__":
                     print(f"  - {u}")
             else:
                 print("✅ 既に同期済み")
+        elif args.roster == 'update':
+            print("\n🌐 Webから最新ロースターを取得...")
+            success = auto_update_rosters(force=True)
+            if success:
+                print("\n✅ ロースター取得完了")
+                print("   次に --roster sync でデータベースを同期してください")
+            else:
+                print("\n❌ ロースター取得失敗")
+        elif args.roster == 'auto':
+            print("\n🔄 ロースター自動更新...")
+            if auto_update_rosters(force=True):
+                updated = sync_database()
+                if updated:
+                    print(f"\n✅ データベース更新: {len(updated)}件")
+                    for u in updated:
+                        print(f"  - {u}")
+                else:
+                    print("\n✅ データベースは最新です")
+            else:
+                print("\n⚠️ Web取得失敗、ローカルロースターを使用")
         sys.exit(0)
 
     # 起動時ロースター検証（--no-roster-check でスキップ可）
